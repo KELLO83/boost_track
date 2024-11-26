@@ -10,7 +10,7 @@ from typing import Optional, List
 import cv2
 import numpy as np
 
-from default_settings import GeneralSettings, BoostTrackSettings, BoostTrackPlusPlusSettings
+from default_settings import GeneralSettings, BoostTrackSettings, BoostTrackPlusPlusSettings, BoostTrackConfig
 from tracker.embedding import EmbeddingComputer
 from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch
 from tracker.ecc import ECC
@@ -125,34 +125,40 @@ class KalmanBoxTracker(object):
 
 
 class BoostTrack(object):
-    def __init__(self, video_name: Optional[str] = None):
-
+    def __init__(self, cfg: BoostTrackConfig = None):
+        if cfg is None:
+            cfg = BoostTrackConfig.get_default_config()
+            
         self.frame_count = 0
-        self.trackers: List[KalmanBoxTracker] = []
-
-        self.max_age = GeneralSettings.max_age(video_name)
-        self.iou_threshold = GeneralSettings['iou_threshold']
-        self.det_thresh = GeneralSettings['det_thresh']
-        self.min_hits = GeneralSettings['min_hits']
-
-        self.lambda_iou = BoostTrackSettings['lambda_iou']
-        self.lambda_mhd = BoostTrackSettings['lambda_mhd']
-        self.lambda_shape = BoostTrackSettings['lambda_shape']
-        self.use_dlo_boost = BoostTrackSettings['use_dlo_boost']
-        self.use_duo_boost = BoostTrackSettings['use_duo_boost']
-        self.dlo_boost_coef = BoostTrackSettings['dlo_boost_coef']
-
-        self.use_rich_s = BoostTrackPlusPlusSettings['use_rich_s']
-        self.use_sb = BoostTrackPlusPlusSettings['use_sb']
-        self.use_vt = BoostTrackPlusPlusSettings['use_vt']
-
-        if GeneralSettings['use_embedding']:
-            self.embedder = EmbeddingComputer(GeneralSettings['dataset'], GeneralSettings['test_dataset'], True)
+        self.trackers = []
+        
+        # 설정 적용
+        self.max_age = cfg.max_age
+        self.min_hits = cfg.min_hits
+        self.det_thresh = cfg.det_thresh
+        self.iou_threshold = cfg.iou_threshold
+        
+        self.lambda_iou = cfg.lambda_iou
+        self.lambda_mhd = cfg.lambda_mhd
+        self.lambda_shape = cfg.lambda_shape
+        self.use_dlo_boost = cfg.use_dlo_boost
+        self.use_duo_boost = cfg.use_duo_boost
+        self.dlo_boost_coef = cfg.dlo_boost_coef
+        
+        # DLO boost 관련 설정 추가 - BoostTrackPlusPlusSettings
+        self.use_rich_s = cfg.use_rich_s if hasattr(cfg, 'use_rich_s') else True  # Rich similarity 사용 여부
+        self.use_sb = cfg.use_sb if hasattr(cfg, 'use_sb') else True  # Soft boost 사용 여부 
+        self.use_vt = cfg.use_vt if hasattr(cfg, 'use_vt') else True  # Varying threshold 사용 여부
+        
+        # Re-ID 초기화
+        if cfg.use_reid:
+            self.embedder = EmbeddingComputer(cfg.dataset, False, True)
         else:
             self.embedder = None
-
-        if GeneralSettings['use_ecc']:
-            self.ecc = ECC(scale=350, video_name=video_name, use_cache=True)
+            
+        # CMC 초기화
+        if cfg.use_cmc:
+            self.ecc = ECC(scale=350, use_cache=True)
         else:
             self.ecc = None
 
@@ -203,20 +209,30 @@ class BoostTrack(object):
         # Generate embeddings
         dets_embs = np.ones((dets.shape[0], 1))
         emb_cost = None
+        
+        # 임베딩계산을 통한 객체 유사도
         if self.embedder and dets.size > 0:
             dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
+            # print("dets_embs")
+            # print(dets_embs.shape)
             trk_embs = []
             for t in range(len(self.trackers)):
                 trk_embs.append(self.trackers[t].get_emb())
             trk_embs = np.array(trk_embs)
+            # 임베딩계산을 통한 객체 유사도
             if trk_embs.size > 0 and dets.size > 0:
                 emb_cost = dets_embs.reshape(dets_embs.shape[0], -1) @ trk_embs.reshape((trk_embs.shape[0], -1)).T
         emb_cost = None if self.embedder is None else emb_cost
-
+        
+        # if emb_cost is not None:
+        #     print("emb_cost")
+        #     for i in range(len(emb_cost)):
+        #         print(emb_cost[i])
+                
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
             trks,
-            self.iou_threshold,
+            self.iou_threshold, # 객체 re-id에 사용할 임계치값 해당 임계치보다 작을경우 객체 re-id탈락
             mahalanobis_distance=self.get_mh_dist_matrix(dets),
             track_confidence=confs,
             detection_confidence=scores,

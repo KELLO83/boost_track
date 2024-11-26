@@ -25,15 +25,15 @@ def get_detector_path_and_im_size(args) -> Tuple[str, Tuple[int, int]]:
 class GeneralSettings:
     values: Dict[str, Union[float, bool, int, str]] = {
         'max_age': 10,
-        'min_hits': 2,
+        'min_hits': 3,
         'det_thresh': 0.5,
         'iou_threshold': 0.2,
         'use_ecc': True,
         'use_embedding': True,
         'dataset': 'mot17',
         'test_dataset': False,
-        'min_box_area': 10,
-        'aspect_ratio_thresh': 1.6
+        'min_box_area': 10, # 작은면적의 박스는 필터링
+        'aspect_ratio_thresh': 1.6 # 검출된 박스의 너비 / 높이 비율이 최대허용값
     }
 
     dataset_specific_settings: Dict[str, Dict[str, Union[float, bool, int]]] = {
@@ -93,7 +93,10 @@ class BoostTrackConfig:
                  use_dlo_boost: bool = True,
                  use_duo_boost: bool = True,
                  dlo_boost_coef: float = 0.6,
-                 s_sim_corr: bool = False):
+                 s_sim_corr: bool = False,
+                 use_rich_s: bool = True,
+                 use_sb: bool = True,
+                 use_vt: bool = True):
         
         self.reid_model_path = Path(reid_model_path)
         self.device = device
@@ -115,6 +118,9 @@ class BoostTrackConfig:
         self.use_duo_boost = use_duo_boost
         self.dlo_boost_coef = dlo_boost_coef
         self.s_sim_corr = s_sim_corr
+        self.use_rich_s = use_rich_s
+        self.use_sb = use_sb
+        self.use_vt = use_vt
 
     @classmethod
     def get_default_config(cls):
