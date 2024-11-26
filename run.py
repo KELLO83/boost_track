@@ -48,7 +48,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/market_sbs_R101-ibn.pth',
+        reid_model_path='external/weights/transformer_120.pth',
         device='cuda',
         max_age=100,
         min_hits=2,

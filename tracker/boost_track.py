@@ -152,7 +152,11 @@ class BoostTrack(object):
         
         # Re-ID 초기화
         if cfg.use_reid:
-            self.embedder = EmbeddingComputer(cfg.dataset, False, True)
+            self.embedder = EmbeddingComputer(
+                dataset=cfg.dataset,
+                test_dataset=True,
+                grid_off=True
+            )
         else:
             self.embedder = None
             
@@ -214,7 +218,7 @@ class BoostTrack(object):
         if self.embedder and dets.size > 0:
             dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
             # print("dets_embs")
-            # print(dets_embs.shape)
+            print(dets_embs.shape)
             trk_embs = []
             for t in range(len(self.trackers)):
                 trk_embs.append(self.trackers[t].get_emb())
@@ -223,7 +227,7 @@ class BoostTrack(object):
             if trk_embs.size > 0 and dets.size > 0:
                 emb_cost = dets_embs.reshape(dets_embs.shape[0], -1) @ trk_embs.reshape((trk_embs.shape[0], -1)).T
         emb_cost = None if self.embedder is None else emb_cost
-        
+        print("emb_cost", emb_cost)        
         # if emb_cost is not None:
         #     print("emb_cost")
         #     for i in range(len(emb_cost)):

@@ -150,7 +150,12 @@ def linear_assignment(detections: np.ndarray, trackers: np.ndarray,
     matches = []
     for m in matched_indices:
         # IOU가 threshold 이상이거나, IOU가 threshold/2 이상이고 임베딩 유사도가 0.6 이상인 경우
-        valid_match = iou_matrix[m[0], m[1]] >= threshold  or (False if emb_cost is None else (iou_matrix[m[0], m[1]] >= threshold / 2 and emb_cost[m[0], m[1]] >= 0.6))
+        valid_match = (
+            iou_matrix[m[0], m[1]] >= threshold or 
+            (False if emb_cost is None else 
+             (iou_matrix[m[0], m[1]] >= threshold / 2 and 
+              emb_cost[m[0], m[1]] >= 0.75))  # TransReID는 더 높은 임계값 사용
+        )
         if valid_match:
             matches.append(m.reshape(1, 2))
         else:
