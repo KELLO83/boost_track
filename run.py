@@ -48,7 +48,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/transformer_120.pth',
+        reid_model_path='external/weights/vit_transreid_market.pth',
         device='cuda',
         max_age=100,
         min_hits=2,
@@ -71,13 +71,6 @@ def main():
 
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     
-    # if args.save_video:
-    #     first_img = cv2.imread(os.path.join(args.img_path, img_list[0]))
-    #     height, width = first_img.shape[:2]
-    #     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    #     original_fps = 15
-    #     out = cv2.VideoWriter('tracking_result_15fps.mp4', fourcc, original_fps, (width, height))
-
     for img_name in tqdm(img_list):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)

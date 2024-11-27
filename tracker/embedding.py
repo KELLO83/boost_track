@@ -6,32 +6,53 @@ import pickle
 import torch
 import cv2
 import torchvision
-import torchreid
 import numpy as np
 import torchvision.transforms as T
+from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID
+from dataclasses import dataclass
 
-from external.adaptors.fastreid_adaptor import FastReID
-from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID
+@dataclass
+class TransReIDConfig:
+    def __init__(self):
+        self.MODEL = self.ModelConfig()
+        self.INPUT = self.InputConfig()
+    
+    class ModelConfig:
+        NAME = 'transformer'
+        JPM = False
+        TRANSFORMER_TYPE = 'vit_base_patch16_224_TransReID'
+        STRIDE_SIZE = [16, 16]
+        DROP_PATH = 0.1
+        DROP_OUT = 0.0
+        ATT_DROP_RATE = 0.0
+        PRETRAIN_CHOICE = 'imagenet'
+        PRETRAIN_PATH = ''
+        SIE_COE = 3.0
+        SIE_CAMERA = False
+        SIE_VIEW = False
+        
+    class InputConfig:
+        SIZE_TRAIN = [256, 128]
 
 """
-
+TransReID를 사용한 임베딩 계산
 """
-
 
 class EmbeddingComputer:
-    def __init__(self, dataset, test_dataset=True, grid_off=True, max_batch=1024):
+    def __init__(self, dataset, test_dataset=True, grid_off=True, max_batch=1024, reid_model_path=None):
         self.model = None
         self.dataset = dataset
         self.test_dataset = test_dataset
-        self.crop_size = (128, 384)
+        self.crop_size = (128, 256)  # TransReID 기본 입력 크기 width x height
         os.makedirs("./cache/embeddings/", exist_ok=True)
         self.cache_path = "./cache/embeddings/{}_embedding.pkl"
         self.cache = {}
         self.cache_name = ""
         self.grid_off = grid_off
         self.max_batch = max_batch
+        self.reid_model_path = reid_model_path
         
-        # normalize만 정의 (ToTensor는 제거)
+        # TransReID normalize 값 사용
         self.normalize = T.Normalize(mean=[0.485, 0.456, 0.406], 
                                    std=[0.229, 0.224, 0.225])
 
@@ -41,64 +62,6 @@ class EmbeddingComputer:
         if os.path.exists(cache_path):
             with open(cache_path, "rb") as fp:
                 self.cache = pickle.load(fp)
-
-    def get_horizontal_split_patches(self, image, bbox, tag, idx, viz=False):
-        if isinstance(image, np.ndarray):
-            h, w = image.shape[:2]
-        else:
-            h, w = image.shape[2:]
-
-        bbox = np.array(bbox)
-        bbox = bbox.astype(np.int32)
-        if bbox[0] < 0 or bbox[1] < 0 or bbox[2] > w or bbox[3] > h:
-            # Faulty Patch Correction
-            bbox[0] = np.clip(bbox[0], 0, None)
-            bbox[1] = np.clip(bbox[1], 0, None)
-            bbox[2] = np.clip(bbox[2], 0, image.shape[1])
-            bbox[3] = np.clip(bbox[3], 0, image.shape[0])
-
-        x1, y1, x2, y2 = bbox
-        w = x2 - x1
-        h = y2 - y1
-        ### TODO - Write a generalized split logic
-        split_boxes = [
-            [x1, y1, x1 + w, y1 + h / 3],
-            [x1, y1 + h / 3, x1 + w, y1 + (2 / 3) * h],
-            [x1, y1 + (2 / 3) * h, x1 + w, y1 + h],
-        ]
-
-        split_boxes = np.array(split_boxes, dtype="int")
-        patches = []
-        # breakpoint()
-        for ix, patch_coords in enumerate(split_boxes):
-            if isinstance(image, np.ndarray):
-                im1 = image[patch_coords[1] : patch_coords[3], patch_coords[0] : patch_coords[2], :]
-
-                if viz:  ## TODO - change it from torch tensor to numpy array
-                    dirs = "./viz/{}/{}".format(tag.split(":")[0], tag.split(":")[1])
-                    Path(dirs).mkdir(parents=True, exist_ok=True)
-                    cv2.imwrite(
-                        os.path.join(dirs, "{}_{}.png".format(idx, ix)),
-                        im1.squeeze(0).permute(1, 2, 0).detach().cpu().numpy() * 255,
-                    )
-                patch = cv2.cvtColor(im1, cv2.COLOR_BGR2RGB)
-                patch = cv2.resize(patch, self.crop_size, interpolation=cv2.INTER_LINEAR)
-                patch = torch.as_tensor(patch.astype("float32").transpose(2, 0, 1))
-                patch = patch.unsqueeze(0)
-                # print("test ", patch.shape)
-                patches.append(patch)
-            else:
-                im1 = image[:, :, patch_coords[1] : patch_coords[3], patch_coords[0] : patch_coords[2]]
-                patch = torchvision.transforms.functional.resize(im1, (256, 128))
-                patches.append(patch)
-
-        patches = torch.cat(patches, dim=0)
-
-        # print("Patches shape ", patches.shape)
-        # patches = np.array(patches)
-        # print("ALL SPLIT PATCHES SHAPE - ", patches.shape)
-
-        return patches
 
     def compute_embedding(self, img, bbox, tag):
         if self.cache_name != tag.split(":")[0]:
@@ -129,29 +92,26 @@ class EmbeddingComputer:
             crop = img[p[1]:p[3], p[0]:p[2]]
             crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
             crop = cv2.resize(crop, self.crop_size, interpolation=cv2.INTER_LINEAR)
-            # numpy array를 torch tensor로 변환하고 정규화
             crop = torch.from_numpy(crop).float()
-            crop = crop.permute(2, 0, 1) / 255.0  # [0,255] -> [0,1]
-            # normalize 적용
+            crop = crop.permute(2, 0, 1) / 255.0
             crop = self.normalize(crop)
             crops.append(crop)
+            cv2.namedWindow("crop", cv2.WINDOW_NORMAL)
+            cv2.imshow("crop", crop.permute(1, 2, 0).numpy())
+            print(crop.shape)
+            cv2.waitKey(0)
             
         crops = torch.stack(crops)
 
-        # ViT를 통한 임베딩 추출
+        # TransReID를 통한 임베딩 추출
         embs = []
         for idx in range(0, len(crops), self.max_batch):
             batch_crops = crops[idx:idx + self.max_batch].cuda()
             with torch.no_grad():
-                # TransReID의 global feature 추출
                 feat = self.model(batch_crops)
-                if isinstance(feat, tuple):
-                    batch_embs = feat[0]  # global features
-                else:
-                    batch_embs = feat
                 # L2 정규화
-                batch_embs = torch.nn.functional.normalize(batch_embs, dim=1)
-            embs.append(batch_embs.cpu())
+                feat = torch.nn.functional.normalize(feat, dim=1)
+            embs.append(feat.cpu())
             
         embs = torch.cat(embs, dim=0)
         embs = embs.numpy()
@@ -159,72 +119,100 @@ class EmbeddingComputer:
         self.cache[tag] = embs
         return embs
 
-    def initialize_model(self):
-        if self.dataset == "mot17":
-            if self.test_dataset:
-                path = "external/weights/transformer_120.pth"
-                model = build_transreid_model(path)
-                model.head = torch.nn.Identity()  # classification head 제거
-            else:
-                return self._get_general_model()
+    def compute_similarity(self, query_emb, gallery_embs, k=1):
+        """
+        두 임베딩 간의 유사도를 계산합니다.
         
-        model.eval()
-        model.cuda()
-        self.model = model
+        Args:
+            query_emb: 쿼리 임베딩 (N x D)
+            gallery_embs: 갤러리 임베딩 (M x D)
+            k: top-k 유사도를 반환
+        
+        Returns:
+            distances: 유사도 점수
+            indices: 가장 유사한 갤러리 인덱스
+        """
+        # 코사인 유사도 계산
+        query_emb = torch.from_numpy(query_emb)
+        gallery_embs = torch.from_numpy(gallery_embs)
+        
+        # 정규화
+        query_emb = torch.nn.functional.normalize(query_emb, dim=1)
+        gallery_embs = torch.nn.functional.normalize(gallery_embs, dim=1)
+        
+        # 유사도 계산 (1 - cosine_similarity)
+        distances = 1 - torch.mm(query_emb, gallery_embs.t())
+        distances = distances.numpy()
+    
+        # top-k 유사도 및 인덱스 반환
+        indices = np.argsort(distances, axis=1)[:, :k]
+        sorted_distances = np.take_along_axis(distances, indices, axis=1)
+        
+        return sorted_distances, indices
+
+    def initialize_model(self):
+        if self.test_dataset:
+            # TransReID ViT 모델 로드
+            print("TransReID ViT model loading...")
+            model = vit_base_patch16_224_TransReID(
+                img_size=(256, 128),
+                stride_size=[12, 12],
+                drop_path_rate=0.1,
+                drop_rate=0.0,
+                attn_drop_rate=0.0,
+            )
+            
+            # 사전 학습된 가중치 로드
+            checkpoint = torch.load(self.reid_model_path)
+            if 'state_dict' in checkpoint:
+                state_dict = checkpoint['state_dict']
+            elif 'model' in checkpoint:
+                state_dict = checkpoint['model']
+            else:
+                state_dict = checkpoint
+                
+            # state_dict의 키 이름 변경이 필요한 경우 처리
+            new_state_dict = OrderedDict()
+            for k, v in state_dict.items():
+                if k.startswith('module.'):
+                    k = k[7:]  # module. 제거
+                if k.startswith('backbone.'):
+                    k = k[9:]  # backbone. 제거
+                if 'head' not in k and 'classifier' not in k:  # head와 classifier 부분은 제외
+                    new_state_dict[k] = v
+            
+            # 모델에 가중치 로드
+            model.load_state_dict(new_state_dict, strict=False)
+            
+            # head 부분을 Identity로 교체하여 feature만 추출
+            model.head = torch.nn.Identity()
+            
+            model.eval()
+            model.cuda()
+            self.model = model
+        else:
+            return self._get_general_model()
 
     def _get_general_model(self):
-        """Used for the half-val for MOT17/20.
-
-        The MOT17/20 SBS models are trained over the half-val we
-        evaluate on as well. Instead we use a different model for
-        validation.
-        """
-        model = torchreid.models.build_model(name="osnet_ain_x1_0", num_classes=2510, loss="softmax", pretrained=False)
+        """MOT17/20의 half-val용 모델"""
+        model = torchreid.models.build_model(
+            name="osnet_ain_x1_0",
+            num_classes=2510,
+            loss="softmax",
+            pretrained=False
+        )
         sd = torch.load("external/weights/osnet_ain_ms_d_c.pth.tar")["state_dict"]
         new_state_dict = OrderedDict()
         for k, v in sd.items():
             name = k[7:]  # remove `module.`
             new_state_dict[name] = v
-        # load params
         model.load_state_dict(new_state_dict)
         model.eval()
         model.cuda()
         self.model = model
         self.crop_size = (128, 256)
-        self.normalize = True
 
     def dump_cache(self):
         if self.cache_name:
             with open(self.cache_path.format(self.cache_name), "wb") as fp:
                 pickle.dump(self.cache, fp)
-
-def build_transreid_model(model_path):
-    """TransReID 모델 빌드 함수"""
-    model_config = {
-        'img_size': [384, 128],
-        'stride_size': [16, 16],
-        'camera': False,
-        'local_feature': True,
-        'num_classes': 751,
-        'patch_size': 16,
-        'dim': 768,
-        'depth': 12,
-        'heads': 12,
-        'mlp_dim': 3072
-    }
-
-    model = vit_base_patch16_224_TransReID(
-        img_size=model_config['img_size'],
-        stride_size=model_config['stride_size'], 
-        drop_path_rate=0.1,
-        camera=model_config['camera'],
-        local_feature=model_config['local_feature'],
-        num_classes=model_config['num_classes']
-    )
-
-    state_dict = torch.load(model_path)
-    if 'model' in state_dict:
-        state_dict = state_dict['model']
-    model.load_state_dict(state_dict, strict=False)
-    
-    return model

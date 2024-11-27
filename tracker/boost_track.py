@@ -155,7 +155,8 @@ class BoostTrack(object):
             self.embedder = EmbeddingComputer(
                 dataset=cfg.dataset,
                 test_dataset=True,
-                grid_off=True
+                grid_off=True,
+                reid_model_path=cfg.reid_model_path
             )
         else:
             self.embedder = None
