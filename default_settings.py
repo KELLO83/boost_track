@@ -76,7 +76,7 @@ class GeneralSettings:
 
 class BoostTrackConfig:
     def __init__(self,
-                 reid_model_path: Union[str, Path] = 'external/weights/mot17_sbs_S50.pth',
+                 reid_model_path: Union[str, Path] = 'external/weights/market_sbs_R101-ibn.pth',
                  device: str = 'cuda',
                  max_age: int = 30,
                  min_hits: int = 3,

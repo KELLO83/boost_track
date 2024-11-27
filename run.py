@@ -48,9 +48,9 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/market_sbs_R101-ibn.pth',
+        reid_model_path='external/weights/osnet_ain_ms_d_c.pth.tar',
         device='cuda',
-        max_age=100,
+        max_age=30,
         min_hits=2,
         det_thresh=0.6,
         iou_threshold=0.3,
@@ -60,10 +60,10 @@ def main():
         use_dlo_boost=True,
         use_duo_boost=True,
         dlo_boost_coef=0.65,
-        use_rich_s=True, # boost Track ++
-        use_sb=True, # Soft Boost
-        use_vt=True, # Varying threshold
-        s_sim_corr=True, # Corrected shape similarity
+        use_rich_s=True,
+        use_sb=True,
+        use_vt=True,
+        s_sim_corr=True,
         use_reid=True,
         use_cmc=False,
         dataset='mot17'
@@ -78,7 +78,7 @@ def main():
     #     original_fps = 15
     #     out = cv2.VideoWriter('tracking_result_15fps.mp4', fourcc, original_fps, (width, height))
 
-    for img_name in tqdm(img_list):
+    for idx, img_name in enumerate(tqdm(img_list, total=len(img_list))):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)
         
@@ -121,7 +121,7 @@ def main():
             # if args.save_video:
             #     out.write(vis_img)
                 
-            if args.visualize:
+            if args.visualize and idx in [145, 573]:
                 cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
                 cv2.imshow('Tracking', vis_img)
                 if cv2.waitKey(0) & 0xFF == ord('q'):
