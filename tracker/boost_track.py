@@ -152,7 +152,12 @@ class BoostTrack(object):
         
         # Re-ID 초기화
         if cfg.use_reid:
-            self.embedder = EmbeddingComputer(cfg.dataset, False, True)
+            self.embedder = EmbeddingComputer(
+                dataset=cfg.dataset, 
+                test_dataset=True, 
+                grid_off=True,
+                reid_model_path=cfg.reid_model_path  # config의 경로 전달
+            )
         else:
             self.embedder = None
             
@@ -213,8 +218,6 @@ class BoostTrack(object):
         # 임베딩계산을 통한 객체 유사도
         if self.embedder and dets.size > 0:
             dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
-            # print("dets_embs")
-            # print(dets_embs.shape)
             trk_embs = []
             for t in range(len(self.trackers)):
                 trk_embs.append(self.trackers[t].get_emb())

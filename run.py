@@ -38,7 +38,7 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--save_video", action="store_true", default=False)
+
     args = parser.parse_args()
 
     # 설정
@@ -48,9 +48,9 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/market_sbs_R101-ibn.pth',
+        reid_model_path='external/weights/mot20_sbs_R101-ibn.pth',
         device='cuda',
-        max_age=100,
+        max_age=50,
         min_hits=2,
         det_thresh=0.6,
         iou_threshold=0.3,
@@ -60,25 +60,17 @@ def main():
         use_dlo_boost=True,
         use_duo_boost=True,
         dlo_boost_coef=0.65,
-        use_rich_s=True, # boost Track ++
-        use_sb=True, # Soft Boost
-        use_vt=True, # Varying threshold
-        s_sim_corr=True, # Corrected shape similarity
+        use_rich_s=True,
+        use_sb=True,
+        use_vt=True,
+        s_sim_corr=True,
         use_reid=True,
         use_cmc=False,
-        dataset='mot17'
     ))
 
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    
-    # if args.save_video:
-    #     first_img = cv2.imread(os.path.join(args.img_path, img_list[0]))
-    #     height, width = first_img.shape[:2]
-    #     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-    #     original_fps = 15
-    #     out = cv2.VideoWriter('tracking_result_15fps.mp4', fourcc, original_fps, (width, height))
-
-    for img_name in tqdm(img_list):
+    stop_frame_ids = [145 , 573]
+    for idx, img_name in enumerate(tqdm(img_list, total=len(img_list))):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)
         
@@ -86,7 +78,8 @@ def main():
         if np_img is None:
             continue
 
-        results = model.predict(np_img, device='cuda', classes=[0] , augment = True)
+        results = model.predict(np_img, device='cuda', classes=[0] , augment = True , 
+                                iou = 0.7 , conf = 0.3 )                        
         dets = process_yolo_detection(results, np_img.shape[1], np_img.shape[0])
         
         if dets is None or len(dets) == 0:
@@ -103,7 +96,7 @@ def main():
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
 
-        if args.visualize or args.save_video:
+        if args.visualize and idx in stop_frame_ids:
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -117,21 +110,12 @@ def main():
                 cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
-            
-            # if args.save_video:
-            #     out.write(vis_img)
-                
-            if args.visualize:
-                cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
-                cv2.imshow('Tracking', vis_img)
-                if cv2.waitKey(0) & 0xFF == ord('q'):
-                    break
 
-    # 리소스 해제
-    # if args.save_video:
-    #     out.release()
-    # if args.visualize:
-    #     cv2.destroyAllWindows()
+            
+            cv2.namedWindow("BoostTrack", cv2.WINDOW_NORMAL)
+            cv2.imshow("BoostTrack", vis_img)
+            cv2.waitKey(0)
+            
 
 if __name__ == "__main__":
     main()

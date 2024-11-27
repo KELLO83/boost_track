@@ -18,7 +18,7 @@ https://github.com/GerardMaggiolino/Deep-OC-SORT/
 
 
 class EmbeddingComputer:
-    def __init__(self, dataset, test_dataset, grid_off, max_batch=1024):
+    def __init__(self, dataset, test_dataset, grid_off, max_batch=1024, reid_model_path=None):
         self.model = None
         self.dataset = dataset
         self.test_dataset = test_dataset
@@ -29,6 +29,7 @@ class EmbeddingComputer:
         self.cache_name = ""
         self.grid_off = grid_off
         self.max_batch = max_batch
+        self.reid_model_path = reid_model_path
 
         # Only used for the general ReID model (not FastReID)
         self.normalize = False
@@ -165,34 +166,19 @@ class EmbeddingComputer:
         return embs
 
     def initialize_model(self):
-        if self.dataset == "mot17":
-            if self.test_dataset:
-                path = "external/weights/mot17_sbs_S50.pth"
-            else:
-                return self._get_general_model()
-        elif self.dataset == "mot20":
-            if self.test_dataset:
-                path = "external/weights/mot20_sbs_S50.pth"
-            else:
-                return self._get_general_model()
-        elif self.dataset == "dance":
-            path = "external/weights/dance_sbs_S50.pth"
-        else:
-            raise RuntimeError("Need the path for a new ReID model.")
-
+        if self.reid_model_path and self.reid_model_path is not None:
+            path = self.reid_model_path
+            
+        if "osnet" in str(path).lower():
+            return self._get_general_model()
+                
         model = FastReID(path)
         model.eval()
         model.cuda()
-        model.half()
         self.model = model
 
     def _get_general_model(self):
-        """Used for the half-val for MOT17/20.
 
-        The MOT17/20 SBS models are trained over the half-val we
-        evaluate on as well. Instead we use a different model for
-        validation.
-        """
         model = torchreid.models.build_model(name="osnet_ain_x1_0", num_classes=2510, loss="softmax", pretrained=False)
         sd = torch.load("external/weights/osnet_ain_ms_d_c.pth.tar")["state_dict"]
         new_state_dict = OrderedDict()
