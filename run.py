@@ -64,7 +64,7 @@ def main():
         s_sim_corr=True, # Corrected shape similarity
         use_reid=True,
         use_cmc=False,
-        dataset='mot17'
+        dataset='Mot17'
     ))
 
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
@@ -108,11 +108,12 @@ def main():
                 cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
-            
-                cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
-                cv2.imshow('Tracking', vis_img)
-                if cv2.waitKey(0) & 0xFF == ord('q'):
-                    break
+        
+                
+        cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
+        cv2.imshow('Tracking', vis_img)
+        if cv2.waitKey(0) & 0xFF == ord('q'):
+            break
 
 
 if __name__ == "__main__":

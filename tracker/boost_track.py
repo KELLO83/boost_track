@@ -152,12 +152,7 @@ class BoostTrack(object):
         
         # Re-ID 초기화
         if cfg.use_reid:
-            self.embedder = EmbeddingComputer(
-                dataset=cfg.dataset,
-                test_dataset=True,
-                grid_off=True,
-                reid_model_path=cfg.reid_model_path
-            )
+            self.embedder = EmbeddingComputer(cfg)
         else:
             self.embedder = None
             
@@ -218,21 +213,30 @@ class BoostTrack(object):
         # 임베딩계산을 통한 객체 유사도
         if self.embedder and dets.size > 0:
             dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
-            # print("dets_embs")
-            print(dets_embs.shape)
+            if dets_embs.size == 0:  # 임베딩 계산 실패 시 기본값 사용
+                print("Warning: Failed to compute embeddings, using default values")
+                dets_embs = np.random.randn(dets.shape[0], 768)  # 랜덤 임베딩 사용
+                dets_embs = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)  # L2 정규화
+            
             trk_embs = []
             for t in range(len(self.trackers)):
                 trk_embs.append(self.trackers[t].get_emb())
             trk_embs = np.array(trk_embs)
-            # 임베딩계산을 통한 객체 유사도
+            
+            # 코사인 유사도 계산
             if trk_embs.size > 0 and dets.size > 0:
-                emb_cost = dets_embs.reshape(dets_embs.shape[0], -1) @ trk_embs.reshape((trk_embs.shape[0], -1)).T
+                # L2 정규화
+                dets_embs_norm = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)
+                trk_embs_norm = trk_embs / np.linalg.norm(trk_embs, axis=1, keepdims=True)
+                # 코사인 유사도 계산 (1에 가까울수록 유사)
+                emb_cost = np.dot(dets_embs_norm, trk_embs_norm.T)
         emb_cost = None if self.embedder is None else emb_cost
-        print("emb_cost", emb_cost)        
-        # if emb_cost is not None:
-        #     print("emb_cost")
-        #     for i in range(len(emb_cost)):
-        #         print(emb_cost[i])
+
+       
+        if emb_cost is not None:
+            print("emb_cost")
+            for i in range(len(emb_cost)):
+                print(emb_cost[i])
                 
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
