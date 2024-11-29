@@ -15,7 +15,7 @@ from natsort import natsorted
 id = {}
 
 def get_id_color(id):
-    color = [random.randint(0, 255) for _ in range(3)]
+    color = [random.randint(150, 255) for _ in range(3)]
     return color
 
 def process_yolo_detection(results, img_width, img_height):
@@ -69,7 +69,8 @@ def main():
 
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     
-    for img_name in tqdm(img_list):
+    stop_frame_ids = [145, 573]
+    for idx , img_name in enumerate(tqdm(img_list)):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)
         
@@ -94,7 +95,7 @@ def main():
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
 
-        if args.visualize or args.save_video:
+        if args.visualize and frame_id in stop_frame_ids:
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -110,11 +111,12 @@ def main():
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
         
                 
-        cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
-        cv2.imshow('Tracking', vis_img)
-        if cv2.waitKey(0) & 0xFF == ord('q'):
-            break
+            cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
+            cv2.imshow('Tracking', vis_img)
+            if cv2.waitKey(0) & 0xFF == ord('q'):
+                break
 
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
