@@ -38,11 +38,9 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--save_video", action="store_true", default=False)
     args = parser.parse_args()
 
     # 설정
-    GeneralSettings.values['dataset'] = 'mot17'
     GeneralSettings.values['use_embedding'] = True
     GeneralSettings.values['use_ecc'] = True
 
@@ -111,20 +109,11 @@ def main():
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
             
-            # if args.save_video:
-            #     out.write(vis_img)
-                
-            if args.visualize:
                 cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
                 cv2.imshow('Tracking', vis_img)
                 if cv2.waitKey(0) & 0xFF == ord('q'):
                     break
 
-    # 리소스 해제
-    # if args.save_video:
-    #     out.release()
-    # if args.visualize:
-    #     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()

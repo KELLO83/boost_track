@@ -10,29 +10,38 @@ import numpy as np
 import torchvision.transforms as T
 from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID
 from dataclasses import dataclass
+from typing import List, Tuple, Optional
 
 @dataclass
 class TransReIDConfig:
+    """TransReID 모델 설정"""
+    class ModelConfig:
+        NAME: str = 'transformer'
+        TRANSFORMER_TYPE: str = 'vit_base_patch16_224_TransReID'
+        STRIDE_SIZE: List[int] = [12, 12]  # TransReID 논문 권장값
+        DROP_PATH: float = 0.1
+        DROP_OUT: float = 0.0
+        ATT_DROP_RATE: float = 0.0
+        
+        # Side Information Embedding (SIE)
+        SIE_COE: float = 3.0
+        SIE_CAMERA: bool = True  # camera-aware
+        SIE_VIEW: bool = False
+        
+        # Jigsaw Patch Module (JPM)
+        JPM: bool = True
+        
+        # Pretrain settings
+        PRETRAIN_CHOICE: str = 'imagenet'
+        PRETRAIN_PATH: str = ''
+        
+    class InputConfig:
+        SIZE_TRAIN: List[int] = [256, 128]  # Market1501 이미지 크기
+        SIZE_TEST: List[int] = [256, 128]
+        
     def __init__(self):
         self.MODEL = self.ModelConfig()
         self.INPUT = self.InputConfig()
-    
-    class ModelConfig:
-        NAME = 'transformer'
-        JPM = False
-        TRANSFORMER_TYPE = 'vit_base_patch16_224_TransReID'
-        STRIDE_SIZE = [16, 16]
-        DROP_PATH = 0.1
-        DROP_OUT = 0.0
-        ATT_DROP_RATE = 0.0
-        PRETRAIN_CHOICE = 'imagenet'
-        PRETRAIN_PATH = ''
-        SIE_COE = 3.0
-        SIE_CAMERA = False
-        SIE_VIEW = False
-        
-    class InputConfig:
-        SIZE_TRAIN = [256, 128]
 
 """
 TransReID를 사용한 임베딩 계산
@@ -43,7 +52,7 @@ class EmbeddingComputer:
         self.model = None
         self.dataset = dataset
         self.test_dataset = test_dataset
-        self.crop_size = (128, 256)  # TransReID 기본 입력 크기 width x height
+        self.crop_size = (128, 256)  # width x height
         os.makedirs("./cache/embeddings/", exist_ok=True)
         self.cache_path = "./cache/embeddings/{}_embedding.pkl"
         self.cache = {}
@@ -151,66 +160,48 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        if self.test_dataset:
-            # TransReID ViT 모델 로드
-            print("TransReID ViT model loading...")
-            model = vit_base_patch16_224_TransReID(
-                img_size=(256, 128),
-                stride_size=[12, 12],
-                drop_path_rate=0.1,
-                drop_rate=0.0,
-                attn_drop_rate=0.0,
-            )
-            
-            # 사전 학습된 가중치 로드
-            checkpoint = torch.load(self.reid_model_path)
-            if 'state_dict' in checkpoint:
-                state_dict = checkpoint['state_dict']
-            elif 'model' in checkpoint:
-                state_dict = checkpoint['model']
-            else:
-                state_dict = checkpoint
-                
-            # state_dict의 키 이름 변경이 필요한 경우 처리
-            new_state_dict = OrderedDict()
-            for k, v in state_dict.items():
-                if k.startswith('module.'):
-                    k = k[7:]  # module. 제거
-                if k.startswith('backbone.'):
-                    k = k[9:]  # backbone. 제거
-                if 'head' not in k and 'classifier' not in k:  # head와 classifier 부분은 제외
-                    new_state_dict[k] = v
-            
-            # 모델에 가중치 로드
-            model.load_state_dict(new_state_dict, strict=False)
-            
-            # head 부분을 Identity로 교체하여 feature만 추출
-            model.head = torch.nn.Identity()
-            
-            model.eval()
-            model.cuda()
-            self.model = model
-        else:
-            return self._get_general_model()
-
-    def _get_general_model(self):
-        """MOT17/20의 half-val용 모델"""
-        model = torchreid.models.build_model(
-            name="osnet_ain_x1_0",
-            num_classes=2510,
-            loss="softmax",
-            pretrained=False
+        print("TransReID ViT model loading...")
+        cfg = TransReIDConfig()
+        
+        # Market1501 데이터셋 기준 설정
+        num_class = 751  # Market1501 클래스 수
+        camera_num = 6   # Market1501 카메라 수
+        view_num = 0     # 시점 정보 미사용
+        
+        model = vit_base_patch16_224_TransReID(
+            img_size=(256, 128),  # height x width
+            stride_size=cfg.MODEL.STRIDE_SIZE,
+            drop_path_rate=cfg.MODEL.DROP_PATH,
+            drop_rate=cfg.MODEL.DROP_OUT,
+            attn_drop_rate=cfg.MODEL.ATT_DROP_RATE,
+            camera=camera_num if cfg.MODEL.SIE_CAMERA else 0,
+            view=view_num if cfg.MODEL.SIE_VIEW else 0,
+            sie_xishu=cfg.MODEL.SIE_COE,
+            local_feature=cfg.MODEL.JPM
         )
-        sd = torch.load("external/weights/osnet_ain_ms_d_c.pth.tar")["state_dict"]
+
+        # 사전 학습된 가중치 로드
+        checkpoint = torch.load(self.reid_model_path)
+        if 'state_dict' in checkpoint:
+            state_dict = checkpoint['state_dict']
+        elif 'model' in checkpoint:
+            state_dict = checkpoint['model']
+        else:
+            state_dict = checkpoint
+            
+        # state_dict 키 이름 정리
         new_state_dict = OrderedDict()
-        for k, v in sd.items():
-            name = k[7:]  # remove `module.`
-            new_state_dict[name] = v
-        model.load_state_dict(new_state_dict)
+        for k, v in state_dict.items():
+            if k.startswith('module.'):
+                k = k[7:]  # module. 제거
+            if k.startswith('backbone.'):
+                k = k[9:]  # backbone. 제거
+            new_state_dict[k] = v
+        
+        model.load_state_dict(new_state_dict, strict=False)
         model.eval()
         model.cuda()
         self.model = model
-        self.crop_size = (128, 256)
 
     def dump_cache(self):
         if self.cache_name:
