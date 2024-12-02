@@ -233,10 +233,10 @@ class BoostTrack(object):
         emb_cost = None if self.embedder is None else emb_cost
 
        
-        if emb_cost is not None:
-            print("emb_cost")
-            for i in range(len(emb_cost)):
-                print(emb_cost[i])
+        # if emb_cost is not None:
+        #     print("emb_cost")
+        #     for i in range(len(emb_cost)):
+        #         print(emb_cost[i])
                 
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,

@@ -12,6 +12,7 @@ from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReI
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
+import torchinfo
 
 @dataclass
 class TransReIDConfig:
@@ -71,6 +72,54 @@ class EmbeddingComputer:
             T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
 
+    def visualize_attention(self, feat, img):
+        try:
+            B, N, D = feat.shape
+            target_tokens = [0, 1, 50,100,150,200]
+            
+            with torch.no_grad():
+                attn_layer = self.model.blocks[-1].attn
+                x = feat.to(self.device)
+                qkv = attn_layer.qkv(x)
+                qkv = qkv.reshape(B, N, 3, attn_layer.num_heads, D // attn_layer.num_heads)
+                qkv = qkv.permute(2, 0, 3, 1, 4)
+                q, k, v = qkv[0], qkv[1], qkv[2]
+                attn = (q @ k.transpose(-2, -1)) * attn_layer.scale
+                attn = attn.softmax(dim=-1)
+                attn_weights = attn.mean(1)
+            
+            H, W = img.shape[:2]
+            visualizations = []
+            
+            for i in target_tokens:
+                if i >= N:
+                    continue
+                    
+                token_name = "CLS" if i == 0 else f"Patch_{i}"
+                attn_map = attn_weights[0, i, 1:].reshape(16, 8).cpu().numpy()
+                attn_map = cv2.resize(attn_map, (W, H))
+                attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
+                heatmap = cv2.applyColorMap(np.uint8(255 * attn_map), cv2.COLORMAP_JET)
+                overlay = cv2.addWeighted(img.copy(), 0.6, heatmap, 0.4, 0)
+                
+                if i > 0:
+                    patch_y = ((i-1) // 8) * 16
+                    patch_x = ((i-1) % 8) * 16
+                    cv2.rectangle(overlay, 
+                                (patch_x, patch_y), 
+                                (patch_x + 16, patch_y + 16), 
+                                (0, 255, 0), 2)
+                
+                cv2.imshow(f'Attention Map - {token_name}', overlay)
+                visualizations.append((token_name, overlay))
+            
+            key = cv2.waitKey(0)
+            return visualizations
+            
+        except Exception as e:
+            print(f"Error in visualize_attention: {str(e)}")
+            return None
+    
     def load_cache(self, path):
         self.cache_name = path
         cache_path = self.cache_path.format(path)
@@ -118,10 +167,7 @@ class EmbeddingComputer:
 
         crops = torch.stack(crops)
         crops = crops.to(self.device)
-        
-        # 디버깅 정보 출력
-        print(f"Input tensor shape: {crops.shape}")
-        
+                
         # 배치 처리
         embs = []
         with torch.no_grad():
@@ -130,13 +176,21 @@ class EmbeddingComputer:
                 try:
                     # camera_label과 view_label 생성
                     batch_size = batch.shape[0]
-                    camera_label = torch.zeros(batch_size).long().to(self.device)  # 모든 이미지를 camera 0으로 설정
-                    view_label = torch.zeros(batch_size).long().to(self.device)    # 모든 이미지를 view 0으로 설정
+                    camera_label = torch.zeros(batch_size).long().to(self.device)
+                    view_label = torch.zeros(batch_size).long().to(self.device)
                     
+                    # forward pass로 특징 추출
                     feat = self.model(batch, cam_label=camera_label, view_label=view_label)
                     if isinstance(feat, tuple):
-                        feat = feat[0]  # global feature만 사용
+                        feat = feat[0]
+                    
+                    #self.visualize_attention(feat , img)
+                    
+                    # [CLS] 토큰만 사용
+                    feat = feat[:, 0, :]  # [B, 768] 크기의 대표 특징만 추출
+                    
                     embs.append(feat.cpu())
+                    
                 except RuntimeError as e:
                     print(f"Error processing batch: {e}")
                     print(f"Batch shape: {batch.shape}")
@@ -171,29 +225,23 @@ class EmbeddingComputer:
             distances: 유사도 점수 (0~1 사이의 값)
             indices: 가장 유사한 갤러리 인덱스
         """
-        # numpy array를 torch tensor로 변환
+
         query_emb = torch.from_numpy(query_emb)
         gallery_embs = torch.from_numpy(gallery_embs)
-        
-        # L2 정규화 적용
+
         query_emb = F.normalize(query_emb, p=2, dim=1)
         gallery_embs = F.normalize(gallery_embs, p=2, dim=1)
         
-        # 코사인 유사도 계산 (1 - cosine_similarity)
-        # cosine_similarity는 -1 ~ 1 사이의 값을 가지므로
-        # 1 - cosine_similarity는 0 ~ 2 사이의 값을 가짐
-        # 이를 0 ~ 1 사이로 정규화
+
         similarities = torch.mm(query_emb, gallery_embs.t())
         distances = (1 - similarities) / 2.0  # 0 ~ 1 사이로 정규화
         
-        # numpy로 변환
         distances = distances.numpy()
         
-        # top-k 유사도 및 인덱스 반환
         indices = np.argsort(distances, axis=1)[:, :k]
         sorted_distances = np.take_along_axis(distances, indices, axis=1)
         
-        # 디버깅을 위한 출력
+
         print(f"Distance range: [{distances.min():.4f}, {distances.max():.4f}]")
         
         return sorted_distances, indices
@@ -202,25 +250,26 @@ class EmbeddingComputer:
         print("TransReID ViT model loading...")
         cfg = TransReIDConfig()
         
-        # Market1501 데이터셋 기준 설정
-        num_class = 751  # Market1501 클래스 수
-        camera_num = 6   # Market1501 카메라 수
-        view_num = 0     # 시점 정보 미사용
-        
         model = vit_base_patch16_224_TransReID(
-            img_size=(256, 128),  # height x width
-            stride_size=16,       # stride_size
+            img_size=(256, 128),     # input image size
+            stride_size=16,          # patch (feature) extraction stride
             drop_rate=0.0,
             attn_drop_rate=0.0,
             drop_path_rate=0.1,
-            camera=camera_num,    # camera label 수
-            view=view_num,        # view label 수
-            sie_xishu=cfg.MODEL.SIE_COE,  # SIE coefficient
-            local_feature=False,  # global feature만 사용
-            num_classes=num_class # 클래스 수
+            camera=0,                # SIE 완전 비활성화
+            view=0,                  # SIE 완전 비활성화
+            sie_xishu=0.0,          # SIE 비율
+            local_feature=True,     # local feature extraction
+            num_classes=1           # number of classification classes
         )
-
-        # 사전 학습된 가중치 로드
+        
+        print('================================================')
+        for name, module in model.named_children():
+            print(f"\n{name}:")
+            print(module)
+        print('================================================')
+            
+        # 가중치 로드
         checkpoint = torch.load(self.config.reid_model_path)
         if 'state_dict' in checkpoint:
             state_dict = checkpoint['state_dict']
@@ -229,18 +278,19 @@ class EmbeddingComputer:
         else:
             state_dict = checkpoint
             
-        # state_dict 키 이름 정리
         new_state_dict = OrderedDict()
         for k, v in state_dict.items():
             if k.startswith('module.'):
-                k = k[7:]  # module. 제거
+                k = k[7:]
             if k.startswith('backbone.'):
-                k = k[9:]  # backbone. 제거
+                k = k[9:]
             new_state_dict[k] = v
         
         model.load_state_dict(new_state_dict, strict=False)
         model.eval()
         model.cuda()
+
+
         self.model = model
 
     def dump_cache(self):

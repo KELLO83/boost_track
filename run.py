@@ -12,6 +12,7 @@ import random
 from natsort import natsorted
 
 
+
 id = {}
 
 def get_id_color(id):
@@ -34,6 +35,7 @@ def process_yolo_detection(results, img_width, img_height):
     return np.array(dets) if dets else None
 
 def main():
+    global id
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
@@ -46,7 +48,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/vit_transreid_market.pth',
+        reid_model_path='external/weights/vit_transreid_msmt.pth',
         device='cuda',
         max_age=100,
         min_hits=2,
@@ -64,7 +66,6 @@ def main():
         s_sim_corr=True, # Corrected shape similarity
         use_reid=True,
         use_cmc=False,
-        dataset='Mot17'
     ))
 
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
@@ -78,7 +79,11 @@ def main():
         if np_img is None:
             continue
 
-        results = model.predict(np_img, device='cuda', classes=[0] , augment = True)
+        results = model.predict(np_img, device='cuda', classes=[0] , augment = True , 
+                                iou = 0.7 , conf = 0.3 )
+        
+        for result in results:
+            yolo_plot = result.plot()
         dets = process_yolo_detection(results, np_img.shape[1], np_img.shape[0])
         
         if dets is None or len(dets) == 0:
@@ -95,7 +100,8 @@ def main():
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
 
-        if args.visualize and frame_id in stop_frame_ids:
+        track_id_list = []
+        if args.visualize :
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -105,16 +111,22 @@ def main():
                     id[track_id] = color
                 else:
                     color = id[track_id]
-                    
+                
+                if track_id not in track_id_list:
+                    track_id_list.append(int(track_id))                    
+
+                
                 cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
         
-                
+            cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
+            cv2.imshow('yolo', yolo_plot)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
             cv2.imshow('Tracking', vis_img)
             if cv2.waitKey(0) & 0xFF == ord('q'):
                 break
+        print(track_id_list)
 
     cv2.destroyAllWindows()
 
