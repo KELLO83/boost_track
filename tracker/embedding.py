@@ -74,8 +74,21 @@ class EmbeddingComputer:
 
     def visualize_attention(self, feat, img):
         try:
-            B, N, D = feat.shape
-            target_tokens = [0, 1, 50,100,150,200]
+            print('img shape: ', img.shape)
+            print('feat shape: ', feat.shape)
+            try:
+                B, N, D = feat.shape
+            except Exception as e:
+                raise Exception("Error in visualize_attention: Invalid input shape")
+
+            # 패치 그리드 크기 계산 (256x128 이미지를 16x16 패치로 분할)
+            patch_size = 16
+            img_h, img_w = 256, 128  # 모델 입력 크기
+            num_patches_h = img_h // patch_size  # 16
+            num_patches_w = img_w // patch_size  # 8
+            total_patches = num_patches_h * num_patches_w  # 128
+                
+            target_tokens = [ i for i in range(N) if i%10 == 0]
             
             with torch.no_grad():
                 attn_layer = self.model.blocks[-1].attn
@@ -96,20 +109,39 @@ class EmbeddingComputer:
                     continue
                     
                 token_name = "CLS" if i == 0 else f"Patch_{i}"
-                attn_map = attn_weights[0, i, 1:].reshape(16, 8).cpu().numpy()
+                
+                # Attention map 계산 (CLS 토큰 제외)
+                attn_map = attn_weights[0, i, 1:].reshape(num_patches_h, num_patches_w).cpu().numpy()
+                
+                # Attention map을 이미지 크기로 resize
                 attn_map = cv2.resize(attn_map, (W, H))
                 attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
                 heatmap = cv2.applyColorMap(np.uint8(255 * attn_map), cv2.COLORMAP_JET)
                 overlay = cv2.addWeighted(img.copy(), 0.6, heatmap, 0.4, 0)
                 
+                # 패치 위치 표시 (CLS 토큰 제외)
                 if i > 0:
-                    patch_y = ((i-1) // 8) * 16
-                    patch_x = ((i-1) % 8) * 16
+                    patch_idx = i - 1  # CLS 토큰을 제외한 실제 패치 인덱스
+                    
+                    # 패치의 행과 열 계산
+                    row = patch_idx // num_patches_w
+                    col = patch_idx % num_patches_w
+                    
+                    # 원본 이미지 크기에 맞게 패치 위치 조정
+                    patch_h = H / num_patches_h
+                    patch_w = W / num_patches_w
+                    
+                    patch_y = int(row * patch_h)
+                    patch_x = int(col * patch_w)
+                    patch_h = int(patch_h)
+                    patch_w = int(patch_w)
+                    
+                    # 패치 영역 표시
                     cv2.rectangle(overlay, 
-                                (patch_x, patch_y), 
-                                (patch_x + 16, patch_y + 16), 
+                                (patch_x, patch_y),
+                                (patch_x + patch_w, patch_y + patch_h),
                                 (0, 255, 0), 2)
-                
+                cv2.namedWindow(f'Attention Map - {token_name}', cv2.WINDOW_NORMAL)
                 cv2.imshow(f'Attention Map - {token_name}', overlay)
                 visualizations.append((token_name, overlay))
             
@@ -141,6 +173,7 @@ class EmbeddingComputer:
 
         # 이미지 크롭 및 전처리
         crops = []
+        original_crops = []  # 원본 크롭 이미지 저장
         h, w = img.shape[:2]
         results = np.round(bbox).astype(np.int32)
         results[:, 0] = results[:, 0].clip(0, w)
@@ -155,11 +188,13 @@ class EmbeddingComputer:
             if crop.shape[0] < 2 or crop.shape[1] < 2:  # 최소 크기 확인
                 continue
             
+            original_crops.append(crop.copy())  # 원본 크롭 저장
+            
             # BGR to RGB
             crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
             
             # TransReID 전처리
-            crop = self.transform(crop)
+            crop = self.transform(crop) # resize + Normalize
             crops.append(crop)
 
         if not crops:  # 유효한 크롭이 없는 경우
@@ -181,13 +216,25 @@ class EmbeddingComputer:
                     
                     # forward pass로 특징 추출
                     feat = self.model(batch, cam_label=camera_label, view_label=view_label)
+                    token_copy = feat.detach().clone()
                     if isinstance(feat, tuple):
                         feat = feat[0]
                     
-                    #self.visualize_attention(feat , img)
                     
-                    # [CLS] 토큰만 사용
-                    feat = feat[:, 0, :]  # [B, 768] 크기의 대표 특징만 추출
+                    if not self.config.local_feature:
+                    # CLS 토큰만 사용
+                        feat = feat[:, 0 , :] # [1,768]
+                    
+                    else:
+                        # 모든 토큰 사용 (CLS 토큰 + 패치 토큰)
+                        # feat shape: [B, N+1, D] where N is number of patches, D is embedding dimension
+                        #print(feat.shape) # torch.size([1 , 129 , 768])
+                        feat = feat.mean(dim=1)  # [B, D] - 모든 토큰의 평균을 사용 [ 1 , 768]
+                    
+                    # 각 크롭에 대해 attention map 시각화
+                    # batch_crops = original_crops[i:i + self.max_batch]
+                    # for idx, crop_img in enumerate(batch_crops):
+                    #     self.visualize_attention(token_copy[idx:idx+1], crop_img)
                     
                     embs.append(feat.cpu())
                     
@@ -262,12 +309,13 @@ class EmbeddingComputer:
             local_feature=True,     # local feature extraction
             num_classes=1           # number of classification classes
         )
-        
-        print('================================================')
-        for name, module in model.named_children():
-            print(f"\n{name}:")
-            print(module)
-        print('================================================')
+       
+        # 모델 구조확인  
+        # print('================================================')
+        # for name, module in model.named_children():
+        #     print(f"\n{name}:")
+        #     print(module)
+        # print('================================================')
             
         # 가중치 로드
         checkpoint = torch.load(self.config.reid_model_path)

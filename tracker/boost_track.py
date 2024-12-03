@@ -177,7 +177,6 @@ class BoostTrack(object):
 
         self.frame_count += 1
 
-        # Rescale
         scale = min(img_tensor.shape[2] / img_numpy.shape[0], img_tensor.shape[3] / img_numpy.shape[1])
         dets = deepcopy(dets)
         dets[:, :4] /= scale
@@ -187,7 +186,6 @@ class BoostTrack(object):
             for trk in self.trackers:
                 trk.camera_update(transform)
 
-        # get predicted locations from existing trackers.
         trks = np.zeros((len(self.trackers), 5))
         confs = np.zeros((len(self.trackers), 1))
 
@@ -206,38 +204,35 @@ class BoostTrack(object):
         dets = dets[remain_inds]
         scores = dets[:, 4]
 
-        # Generate embeddings
-        dets_embs = np.ones((dets.shape[0], 1))
-        emb_cost = None
-        
-        # 임베딩계산을 통한 객체 유사도
+        # 임베딩 기반 객체 유사도 계산
+        emb_cost = None  
         if self.embedder and dets.size > 0:
-            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
-            if dets_embs.size == 0:  # 임베딩 계산 실패 시 기본값 사용
-                print("Warning: Failed to compute embeddings, using default values")
-                dets_embs = np.random.randn(dets.shape[0], 768)  # 랜덤 임베딩 사용
-                dets_embs = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)  # L2 정규화
+            # 현재 프레임의 모든 검출 객체에 대한 임베딩 계산
+            # dets_embs shape: [N, D] where N=검출 객체 수, D=768(임베딩 차원)
+            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag) # 방금 새로 검출한 객체에대한 임베딩값
             
+            if dets_embs.size == 0:  # 임베딩 계산 실패 시
+                raise RuntimeError("Embedding computation failed.")
+            
+            # 현재 추적 중인 모든 객체의 임베딩 수집
             trk_embs = []
             for t in range(len(self.trackers)):
                 trk_embs.append(self.trackers[t].get_emb())
-            trk_embs = np.array(trk_embs)
+            trk_embs = np.array(trk_embs)  # shape: [M, D] where M=트래커 수, D=768
             
-            # 코사인 유사도 계산
+            # 검출된 객체와 추적 중인 객체 간의 유사도 계산
             if trk_embs.size > 0 and dets.size > 0:
-                # L2 정규화
-                dets_embs_norm = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)
-                trk_embs_norm = trk_embs / np.linalg.norm(trk_embs, axis=1, keepdims=True)
-                # 코사인 유사도 계산 (1에 가까울수록 유사)
-                emb_cost = np.dot(dets_embs_norm, trk_embs_norm.T)
-        emb_cost = None if self.embedder is None else emb_cost
-
-       
-        # if emb_cost is not None:
-        #     print("emb_cost")
-        #     for i in range(len(emb_cost)):
-        #         print(emb_cost[i])
+                # L2 정규화: 각 벡터를 단위 벡터로 변환
+                dets_embs_norm = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)  # [N, D]
+                trk_embs_norm = trk_embs / np.linalg.norm(trk_embs, axis=1, keepdims=True)    # [M, D]
                 
+                # 코사인 유사도 계산: dot(A, B.T) / (||A|| * ||B||)
+                # 정규화된 벡터이므로 분모는 1이 되어 내적만으로 코사인 유사도 계산 가능
+                # emb_cost shape: [N, M] - N개 검출과 M개 트래커 간의 모든 쌍에 대한 유사도
+                emb_cost = np.dot(dets_embs_norm, trk_embs_norm.T)  # 값의 범위: [-1, 1]
+                
+        emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
+
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
             trks,
