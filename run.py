@@ -39,7 +39,6 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument('--track_id', type=int, default=None)
     args = parser.parse_args()
 
     # 설정
@@ -50,8 +49,8 @@ def main():
     tracker = BoostTrack(BoostTrackConfig(
         reid_model_path='external/weights/vit_transreid_duke.pth',
         device='cuda',
-        max_age=100,
-        min_hits=2,
+        max_age=10,
+        min_hits=30,
         det_thresh=0.6,
         iou_threshold=0.3,
         lambda_iou=0.7,
@@ -105,7 +104,7 @@ def main():
                                                GeneralSettings['min_box_area'])
 
         track_id_list = []
-        if args.visualize  and idx in stop_frame_ids:
+        if args.visualize :
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -136,18 +135,6 @@ def main():
         
         
 
-        if args.track_id in track_id_list and args.track_id is not None:
-            if tracking_flag == False:
-                tracking_flag = True
-            deque_list.append(vis_img)
-        elif tracking_flag == True:  # track_id가 사라졌을 때
-            tracking_flag = False
-            # 이전 3프레임 보여주기
-            for i, prev_img in enumerate(deque_list):
-                cv2.namedWindow(f'Previous Frame {i+1}', cv2.WINDOW_NORMAL)
-                cv2.imshow(f'Previous Frame {i+1}', prev_img)
-            if cv2.waitKey(0) & 0xFF == ord('q'):
-                break
 
 if __name__ == "__main__":
     main()

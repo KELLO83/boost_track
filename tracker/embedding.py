@@ -231,10 +231,10 @@ class EmbeddingComputer:
                         #print(feat.shape) # torch.size([1 , 129 , 768])
                         feat = feat.mean(dim=1)  # [B, D] - 모든 토큰의 평균을 사용 [ 1 , 768]
                     
-                    # 각 크롭에 대해 attention map 시각화
-                    # batch_crops = original_crops[i:i + self.max_batch]
-                    # for idx, crop_img in enumerate(batch_crops):
-                    #     self.visualize_attention(token_copy[idx:idx+1], crop_img)
+                    #각 크롭에 대해 attention map 시각화
+                    batch_crops = original_crops[i:i + self.max_batch]
+                    for idx, crop_img in enumerate(batch_crops):
+                        self.visualize_attention(token_copy[idx:idx+1], crop_img)
                     
                     embs.append(feat.cpu())
                     
