@@ -10,8 +10,7 @@ from ultralytics import YOLO
 from tqdm import tqdm
 import random
 from natsort import natsorted
-
-
+from collections import deque
 
 id = {}
 
@@ -40,6 +39,7 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
+    parser.add_argument('--track_id', type=int, default=None)
     args = parser.parse_args()
 
     # 설정
@@ -48,7 +48,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/vit_transreid_msmt.pth',
+        reid_model_path='external/weights/vit_transreid_duke.pth',
         device='cuda',
         max_age=100,
         min_hits=2,
@@ -66,8 +66,12 @@ def main():
         s_sim_corr=True, # Corrected shape similarity
         use_reid=True,
         use_cmc=False,
+        local_feature=True
     ))
 
+    deque_list = deque(maxlen=3)
+    tracking_flag = False
+    
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     
     stop_frame_ids = [145, 573]
@@ -101,7 +105,7 @@ def main():
                                                GeneralSettings['min_box_area'])
 
         track_id_list = []
-        if args.visualize :
+        if args.visualize  and idx in stop_frame_ids:
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -126,9 +130,24 @@ def main():
             cv2.imshow('Tracking', vis_img)
             if cv2.waitKey(0) & 0xFF == ord('q'):
                 break
-        print(track_id_list)
+            
+            deque_list.append(vis_img)
+        print(sorted(track_id_list))
+        
+        
 
-    cv2.destroyAllWindows()
+        if args.track_id in track_id_list and args.track_id is not None:
+            if tracking_flag == False:
+                tracking_flag = True
+            deque_list.append(vis_img)
+        elif tracking_flag == True:  # track_id가 사라졌을 때
+            tracking_flag = False
+            # 이전 3프레임 보여주기
+            for i, prev_img in enumerate(deque_list):
+                cv2.namedWindow(f'Previous Frame {i+1}', cv2.WINDOW_NORMAL)
+                cv2.imshow(f'Previous Frame {i+1}', prev_img)
+            if cv2.waitKey(0) & 0xFF == ord('q'):
+                break
 
 if __name__ == "__main__":
     main()

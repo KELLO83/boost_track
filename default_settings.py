@@ -96,8 +96,11 @@ class BoostTrackConfig:
                  s_sim_corr: bool = False,
                  use_rich_s: bool = True,
                  use_sb: bool = True,
-                 use_vt: bool = True):
+                 use_vt: bool = True,
+                 local_feature : bool = False,):
         
+        self.local_feature = local_feature
+                
         self.reid_model_path = Path(reid_model_path)
         self.device = device
         self.max_age = max_age
