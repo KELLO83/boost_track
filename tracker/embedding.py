@@ -168,6 +168,7 @@ class EmbeddingComputer:
     def initialize_model(self):
         if self.reid_model_path and self.reid_model_path is not None:
             path = self.reid_model_path
+<<<<<<< HEAD
             
         if "osnet" in str(path).lower():
             return self._get_general_model()
@@ -176,6 +177,31 @@ class EmbeddingComputer:
         model.eval()
         model.cuda()
         self.model = model
+=======
+        else:
+            if self.dataset == "mot17":
+                if self.test_dataset:
+                    path = "external/weights/mot17_sbs_S50.pth"
+                else:
+                    return self._get_general_model()
+            elif self.dataset == "mot20":
+                if self.test_dataset:
+                    path = "external/weights/mot20_sbs_S50.pth"
+                else:
+                    return self._get_general_model()
+            elif self.dataset == "dance":
+                path = "external/weights/dance_sbs_S50.pth"
+            else:
+                raise RuntimeError("Need the path for a new ReID model.")
+
+        if "osnet" in str(path).lower():
+            return self._get_general_model()
+        else:
+            model = FastReID(path)
+            model.eval()
+            model.cuda()
+            self.model = model
+>>>>>>> origin/main
 
     def _get_general_model(self):
 

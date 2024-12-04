@@ -23,6 +23,7 @@ def setup_cfg(config_file, opts):
 class FastReID(torch.nn.Module):
     def __init__(self, weights_path):
         super().__init__()
+<<<<<<< HEAD
         CONFIGS_NAME = ['DukeMTMC', 'Market1501', 'MSMT17' , 'MOT17']
         DATASET_MAPPING = {
             'duke': 'DukeMTMC',
@@ -31,10 +32,13 @@ class FastReID(torch.nn.Module):
             'mot17': 'MOT17',
         }
         
+=======
+>>>>>>> origin/main
         if isinstance(weights_path, Path):
             weights_path = str(weights_path)
             
         weights_name = os.path.basename(weights_path)
+<<<<<<< HEAD
         print('weights_name: ', weights_name)
         DatasetName = weights_name.split('_')[0].lower()
         if DatasetName in DATASET_MAPPING:
@@ -43,12 +47,20 @@ class FastReID(torch.nn.Module):
 
         else:
             raise ValueError(f'Unknown dataset: {DatasetName}')
+=======
+        
+        if "R101-ibn" in weights_name:
+            config_file = "external/fast_reid/configs/MOT17/sbs_R101-ibn.yml"
+        elif "S50" in weights_name:
+            config_file = "external/fast_reid/configs/MOT17/sbs_S50.yml"
+        else:
+            config_file = "external/fast_reid/configs/MOT17/sbs_R50-ibn.yml"
+>>>>>>> origin/main
             
         self.cfg = setup_cfg(config_file, ['MODEL.WEIGHTS', weights_path])
         self.model = build_model(self.cfg)
         self.model.eval()
         self.model.cuda()
-
         Checkpointer(self.model).load(weights_path)
         self.pH, self.pW = self.cfg.INPUT.SIZE_TEST
 
