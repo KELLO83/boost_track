@@ -23,6 +23,7 @@ def setup_cfg(config_file, opts):
 class FastReID(torch.nn.Module):
     def __init__(self, weights_path):
         super().__init__()
+
         CONFIGS_NAME = ['DukeMTMC', 'Market1501', 'MSMT17' , 'MOT17']
         DATASET_MAPPING = {
             'duke': 'DukeMTMC',
@@ -36,6 +37,7 @@ class FastReID(torch.nn.Module):
             weights_path = str(weights_path)
             
         weights_name = os.path.basename(weights_path)
+
         print('weights_name: ', weights_name)
         DatasetName = weights_name.split('_')[0].lower()
         if DatasetName in DATASET_MAPPING:
@@ -44,7 +46,7 @@ class FastReID(torch.nn.Module):
 
         else:
             raise ValueError(f'Unknown dataset: {DatasetName}')
-            
+
         self.cfg = setup_cfg(config_file, ['MODEL.WEIGHTS', weights_path])
         self.model = build_model(self.cfg)
         self.model.eval()

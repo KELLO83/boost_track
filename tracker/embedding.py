@@ -168,6 +168,14 @@ class EmbeddingComputer:
     def initialize_model(self):
         if self.reid_model_path and self.reid_model_path is not None:
             path = self.reid_model_path
+
+        if "osnet" in str(path).lower():
+            return self._get_general_model()
+        else:
+            model = FastReID(path)
+            model.eval()
+            model.cuda()
+            self.model = model
             
         if "osnet" in str(path).lower():
             return self._get_general_model()
@@ -176,6 +184,7 @@ class EmbeddingComputer:
         model.eval()
         model.cuda()
         self.model = model
+
 
     def _get_general_model(self):
 
