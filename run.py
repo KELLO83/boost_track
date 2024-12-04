@@ -38,6 +38,7 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
+    parser.add_argument('--stop_point', type=int, default=1)
 
     args = parser.parse_args()
 
@@ -48,10 +49,10 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/mot20_sbs_R101-ibn.pth',
+        reid_model_path='external/weights/mot17_sbs_R101-ibn.pth',
         device='cuda',
-        max_age=50,
-        min_hits=2,
+        max_age=300,
+        min_hits=3,
         det_thresh=0.6,
         iou_threshold=0.3,
         lambda_iou=0.7,
@@ -79,7 +80,10 @@ def main():
             continue
 
         results = model.predict(np_img, device='cuda', classes=[0] , augment = True , 
-                                iou = 0.7 , conf = 0.3 )                        
+                                iou = 0.65 , conf = 0.35 )     
+        
+        # results = model.predict(np_img, device='cuda', classes=[0] , augment = True , 
+        #                         iou = 0.35 , conf = 0.45 )                     
         dets = process_yolo_detection(results, np_img.shape[1], np_img.shape[0])
         
         if dets is None or len(dets) == 0:
@@ -96,25 +100,53 @@ def main():
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
 
-        if args.visualize and idx in stop_frame_ids:
-            vis_img = np_img.copy()
-            for tlwh, track_id in zip(tlwhs, ids):
-                x1, y1, w, h = tlwh
-                x2, y2 = x1 + w, y1 + h
-                if track_id not in id:
-                    color = get_id_color(track_id)
-                    id[track_id] = color
-                else:
-                    color = id[track_id]
-                    
-                cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-                cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
-                           cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
+        if args.visualize :
+            if args.stop_point == 0: 
+                vis_img = np_img.copy()
+                for tlwh, track_id in zip(tlwhs, ids):
+                    x1, y1, w, h = tlwh
+                    x2, y2 = x1 + w, y1 + h
+                    if track_id not in id:
+                        color = get_id_color(track_id)
+                        id[track_id] = color
+                    else:
+                        color = id[track_id]
+                        
+                    cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                    cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
+                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
 
+                for results in results:
+                    plot = results.plot()
+                cv2.namedWindow("BoostTrack", cv2.WINDOW_NORMAL)
+                cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
+                cv2.imshow("yolo", plot)
+                cv2.imshow("BoostTrack", vis_img)
+                cv2.waitKey(0)
             
-            cv2.namedWindow("BoostTrack", cv2.WINDOW_NORMAL)
-            cv2.imshow("BoostTrack", vis_img)
-            cv2.waitKey(0)
+            if args.stop_point == 1:
+                if frame_id in stop_frame_ids and idx in stop_frame_ids:
+                    vis_img = np_img.copy()
+                    for tlwh, track_id in zip(tlwhs, ids):
+                        x1, y1, w, h = tlwh
+                        x2, y2 = x1 + w, y1 + h
+                        if track_id not in id:
+                            color = get_id_color(track_id)
+                            id[track_id] = color
+                        else:
+                            color = id[track_id]
+                            
+                        cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                        cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
+                                cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
+
+                    for results in results:
+                         plot = results.plot()
+                    cv2.namedWindow("BoostTrack", cv2.WINDOW_NORMAL)
+                    cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
+                    cv2.imshow("yolo", plot)
+                    cv2.imshow("BoostTrack", vis_img)
+                    cv2.waitKey(0)
             
 
 if __name__ == "__main__":

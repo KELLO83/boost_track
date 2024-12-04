@@ -78,15 +78,15 @@ class BoostTrackConfig:
     def __init__(self,
                  reid_model_path: Union[str, Path] = 'external/weights/market_sbs_R101-ibn.pth',
                  device: str = 'cuda',
-                 max_age: int = 30,
+                 max_age: int = 50,
                  min_hits: int = 3,
                  det_thresh: float = 0.5,
                  iou_threshold: float = 0.3,
                  use_reid: bool = True,
                  use_cmc: bool = True,
                  dataset: str = 'mot17',
-                 min_box_area: int = 10,
-                 aspect_ratio_thresh: float = 1.6,
+                 min_box_area: int = 1000, # 추적하는 객체의 박스크기
+                 aspect_ratio_thresh: float = 1.6, # 박스 가로 // 세로 비율
                  lambda_iou: float = 0.5,
                  lambda_mhd: float = 0.25,
                  lambda_shape: float = 0.25,

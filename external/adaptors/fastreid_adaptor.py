@@ -29,6 +29,7 @@ class FastReID(torch.nn.Module):
             'market': 'Market1501',
             'msmt': 'MSMT17',
             'mot17': 'MOT17',
+            'mot20' : 'MOT20',
         }
         
         if isinstance(weights_path, Path):
@@ -48,7 +49,6 @@ class FastReID(torch.nn.Module):
         self.model = build_model(self.cfg)
         self.model.eval()
         self.model.cuda()
-
         Checkpointer(self.model).load(weights_path)
         self.pH, self.pW = self.cfg.INPUT.SIZE_TEST
 
