@@ -83,31 +83,45 @@ class EmbeddingComputer:
         try:
             print('img shape: ', img.shape)
             print('feat shape: ', feat.shape)
+            
             try:
-                B, N, D = feat.shape
+                B, N, D = feat.shape # [BATCH , TOKEN , EMBEDDING_DIM]
             except Exception as e:
                 raise Exception("Error in visualize_attention: Invalid input shape")
 
-            # 패치 그리드 크기 계산 (모델의 패치 임베딩 로직에 맞춰 조정)
-            patch_size = 16
-            img_h, img_w = img.shape[:2]  # 실제 이미지 크기 사용
-            
-            # 모델의 패치 임베딩 로직에 맞는 패치 수 계산
+            # 동적 패치 수 계산
             num_patches = N - 1  # CLS 토큰 제외
-            num_patches_h = int(math.sqrt(num_patches * img_h / img_w))
-            num_patches_w = int(num_patches / num_patches_h)
             
-            print(f'Adjusted patch calculation: {num_patches_h} x {num_patches_w} = {num_patches} patches')
-                
-            target_tokens = [ i for i in range(N) if i%10 == 0]
+            # 이미지 크기 및 비율 고려한 패치 그리드 계산
+            img_h, img_w = img.shape[:2]
+            aspect_ratio = img_w / img_h
             
+            # 패치 그리드 계산 개선 (더 유연한 알고리즘)
+            num_patches_h = max(int(math.sqrt(num_patches / aspect_ratio)), 1)
+            num_patches_w = max(int(num_patches / num_patches_h), 1)
+            
+            # 실제 패치 수와 계산된 패치 수 조정
+            total_calculated_patches = num_patches_h * num_patches_w
+            if total_calculated_patches > num_patches:
+                num_patches_w = num_patches // num_patches_h
+            
+            print(f'Dynamic patch calculation: {num_patches_h} x {num_patches_w} = {num_patches_h * num_patches_w} patches')
+            print(f'Original token count: {N}, Patch tokens: {num_patches}')
+            
+            target_tokens = [i for i in range(N) if i % 50 == 0]
+                        
             with torch.no_grad():
+                # 마지막 어텐션 레이어 선택
                 attn_layer = self.model.blocks[-1].attn
                 x = feat.to(self.device)
+                
+                # QKV 계산
                 qkv = attn_layer.qkv(x)
                 qkv = qkv.reshape(B, N, 3, attn_layer.num_heads, D // attn_layer.num_heads)
                 qkv = qkv.permute(2, 0, 3, 1, 4)
                 q, k, v = qkv[0], qkv[1], qkv[2]
+                
+                # 어텐션 가중치 계산
                 attn = (q @ k.transpose(-2, -1)) * attn_layer.scale
                 attn = attn.softmax(dim=-1)
                 attn_weights = attn.mean(1)
@@ -118,51 +132,70 @@ class EmbeddingComputer:
             for i in target_tokens:
                 if i >= N:
                     continue
-                    
+                
                 token_name = "CLS" if i == 0 else f"Patch_{i}"
                 
-                # Attention map 계산 (CLS 토큰 제외)
-                attn_map = attn_weights[0, i, 1:].reshape(num_patches_h, num_patches_w).cpu().numpy()
+                try:
+                    # 패치 어텐션 맵 추출 (CLS 토큰 제외)
+                    attn_map = attn_weights[0, i, 1:].cpu().numpy()
+                    
+                    # 1D 어텐션 맵을 2D로 재구성 (안전한 인덱싱)
+                    attn_map_2d = np.zeros((num_patches_h, num_patches_w))
+                    for idx, val in enumerate(attn_map[:num_patches_h * num_patches_w]):
+                        row = idx // num_patches_w
+                        col = idx % num_patches_w
+                        attn_map_2d[row, col] = val
+                    
+                    # 이미지 크기로 리사이즈
+                    attn_map_resized = cv2.resize(attn_map_2d, (W, H), interpolation=cv2.INTER_LINEAR)
+                    
+                    # 정규화
+                    attn_map_resized = (attn_map_resized - attn_map_resized.min()) / (attn_map_resized.max() - attn_map_resized.min() + 1e-8)
+                    
+                    # 히트맵 생성
+                    heatmap = cv2.applyColorMap(np.uint8(255 * attn_map_resized), cv2.COLORMAP_JET)
+                    overlay = cv2.addWeighted(img.copy(), 0.6, heatmap, 0.4, 0)
+                    
+                    # 패치 위치 표시 (CLS 토큰 제외)
+                    if i > 0:
+                        patch_idx = i - 1  # CLS 토큰을 제외한 실제 패치 인덱스
+                        
+                        # 패치의 행과 열 계산
+                        row = patch_idx // num_patches_w
+                        col = patch_idx % num_patches_w
+                        
+                        # 원본 이미지 크기에 맞게 패치 위치 조정
+                        patch_h = H / num_patches_h
+                        patch_w = W / num_patches_w
+                        
+                        patch_y = int(row * patch_h)
+                        patch_x = int(col * patch_w)
+                        patch_h = int(patch_h)
+                        patch_w = int(patch_w)
+                        
+                        # 패치 영역 표시
+                        cv2.rectangle(overlay, 
+                                    (patch_x, patch_y),
+                                    (patch_x + patch_w, patch_y + patch_h),
+                                    (0, 255, 0), 2)
+                    
+                    cv2.namedWindow(f'Attention Map - {token_name}', cv2.WINDOW_NORMAL)
+                    cv2.imshow(f'Attention Map - {token_name}', overlay)
+                    visualizations.append((token_name, overlay))
                 
-                # Attention map을 이미지 크기로 resize
-                attn_map = cv2.resize(attn_map, (W, H))
-                attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min() + 1e-8)
-                heatmap = cv2.applyColorMap(np.uint8(255 * attn_map), cv2.COLORMAP_JET)
-                overlay = cv2.addWeighted(img.copy(), 0.6, heatmap, 0.4, 0)
-                
-                # 패치 위치 표시 (CLS 토큰 제외)
-                if i > 0:
-                    patch_idx = i - 1  # CLS 토큰을 제외한 실제 패치 인덱스
-                    
-                    # 패치의 행과 열 계산
-                    row = patch_idx // num_patches_w
-                    col = patch_idx % num_patches_w
-                    
-                    # 원본 이미지 크기에 맞게 패치 위치 조정
-                    patch_h = H / num_patches_h
-                    patch_w = W / num_patches_w
-                    
-                    patch_y = int(row * patch_h)
-                    patch_x = int(col * patch_w)
-                    patch_h = int(patch_h)
-                    patch_w = int(patch_w)
-                    
-                    # 패치 영역 표시
-                    cv2.rectangle(overlay, 
-                                (patch_x, patch_y),
-                                (patch_x + patch_w, patch_y + patch_h),
-                                (0, 255, 0), 2)
-                cv2.namedWindow(f'Attention Map - {token_name}', cv2.WINDOW_NORMAL)
-                cv2.imshow(f'Attention Map - {token_name}', overlay)
-                visualizations.append((token_name, overlay))
+                except Exception as e:
+                    print(f"Error processing token {i}: {e}")
+                    continue
             
             key = cv2.waitKey(0)
             return visualizations
             
         except Exception as e:
             print(f"Error in visualize_attention: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return None
-    
+        
     def load_cache(self, path):
         self.cache_name = path
         cache_path = self.cache_path.format(path)
@@ -227,25 +260,30 @@ class EmbeddingComputer:
                     
                     # forward pass로 특징 추출
                     feat = self.model(batch, cam_label=camera_label, view_label=view_label)
+                    print(feat.shape)
                     token_copy = feat.detach().clone()
+                    
                     if isinstance(feat, tuple):
                         feat = feat[0]
                     
-                    
                     if not self.config.local_feature:
                     # CLS 토큰만 사용
-                        feat = feat[:, 0 , :] # [1,768]
+                        feat = feat[:, 0 , :] # [1,768] 
                     
                     else:
                         # 모든 토큰 사용 (CLS 토큰 + 패치 토큰)
                         # feat shape: [B, N+1, D] where N is number of patches, D is embedding dimension
-                        #print(feat.shape) # torch.size([1 , 129 , 768])
+                        #print(feat.shape) # torch.size([1 , 129 , 768]) # 129개의 토큰생성 
                         feat = feat.mean(dim=1)  # [B, D] - 모든 토큰의 평균을 사용 [ 1 , 768]
                     
-                    #각 크롭에 대해 attention map 시각화
-                    batch_crops = original_crops[i:i + self.max_batch]
-                    for idx, crop_img in enumerate(batch_crops):
-                        self.visualize_attention(token_copy[idx:idx+1], crop_img)
+                    # #각 크롭에 대해 attention map 시각화
+                    # batch_crops = original_crops[i:i + self.max_batch]
+                    # for idx , crop_img in enumerate(batch_crops):
+                    #     try:
+                    #         self.visualize_attention(token_copy[idx:idx+1], crop_img)
+                    #     except Exception as e:
+                    #         print(f"Unexpected error in attention visualization: {e}")
+
                     
                     embs.append(feat.cpu())
                     
