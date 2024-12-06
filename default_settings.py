@@ -85,7 +85,7 @@ class BoostTrackConfig:
                  use_reid: bool = True,
                  use_cmc: bool = True,
                  dataset: str = 'mot17',
-                 min_box_area: int = 10,
+                 min_box_area: int = 4000,
                  aspect_ratio_thresh: float = 1.6,
                  lambda_iou: float = 0.5,
                  lambda_mhd: float = 0.25,
@@ -97,7 +97,11 @@ class BoostTrackConfig:
                  use_rich_s: bool = True,
                  use_sb: bool = True,
                  use_vt: bool = True,
-                 local_feature : bool = False,):
+                 local_feature : bool = False,
+                 SSL_VIT : bool = False,
+                 ):
+        
+        self.SSL_VIT = SSL_VIT
         
         self.local_feature = local_feature
                 

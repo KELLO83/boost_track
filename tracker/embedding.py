@@ -8,11 +8,13 @@ import cv2
 import torchvision
 import numpy as np
 import torchvision.transforms as T
-from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID
+from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_BASE
+from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND # TransReID SSL VIT_BASE 16
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
 import torchinfo
+import math
 
 @dataclass
 class TransReIDConfig:
@@ -56,7 +58,12 @@ class EmbeddingComputer:
         self.dataset = config.dataset
         self.test_dataset = True
         self.config = config
-        self.crop_size = (256, 128)  # height, width 순서
+        
+        if config.SSL_VIT:
+            self.crop_size = (384, 128)  # VIT-B/16+ICS
+        else:
+            self.crop_size = (256, 128)  # TransReID*(ViT) 
+            
         os.makedirs("./cache/embeddings/", exist_ok=True)
         self.cache_path = "./cache/embeddings/{}_embedding.pkl"
         self.cache = {}
@@ -81,12 +88,16 @@ class EmbeddingComputer:
             except Exception as e:
                 raise Exception("Error in visualize_attention: Invalid input shape")
 
-            # 패치 그리드 크기 계산 (256x128 이미지를 16x16 패치로 분할)
+            # 패치 그리드 크기 계산 (모델의 패치 임베딩 로직에 맞춰 조정)
             patch_size = 16
-            img_h, img_w = 256, 128  # 모델 입력 크기
-            num_patches_h = img_h // patch_size  # 16
-            num_patches_w = img_w // patch_size  # 8
-            total_patches = num_patches_h * num_patches_w  # 128
+            img_h, img_w = img.shape[:2]  # 실제 이미지 크기 사용
+            
+            # 모델의 패치 임베딩 로직에 맞는 패치 수 계산
+            num_patches = N - 1  # CLS 토큰 제외
+            num_patches_h = int(math.sqrt(num_patches * img_h / img_w))
+            num_patches_w = int(num_patches / num_patches_h)
+            
+            print(f'Adjusted patch calculation: {num_patches_h} x {num_patches_w} = {num_patches} patches')
                 
             target_tokens = [ i for i in range(N) if i%10 == 0]
             
@@ -294,30 +305,36 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        print("TransReID ViT model loading...")
-        cfg = TransReIDConfig()
         
-        model = vit_base_patch16_224_TransReID(
-            img_size=(256, 128),     # input image size
-            stride_size=16,          # patch (feature) extraction stride
-            drop_rate=0.0,
-            attn_drop_rate=0.0,
-            drop_path_rate=0.1,
-            camera=0,                # SIE 완전 비활성화
-            view=0,                  # SIE 완전 비활성화
-            sie_xishu=0.0,          # SIE 비율
-            local_feature=True,     # local feature extraction
-            num_classes=1           # number of classification classes
-        )
-       
-        # 모델 구조확인  
-        # print('================================================')
-        # for name, module in model.named_children():
-        #     print(f"\n{name}:")
-        #     print(module)
-        # print('================================================')
-            
-        # 가중치 로드
+        if self.config.SSL_VIT: 
+            print("SSL ViT model loading...")
+            self.crop_size = (384, 128)
+            self.model = VIT_EXTEND(
+                img_size=(384, 128),     # Larger resolution
+                stride_size=12,          # Adjusted stride to match new image size
+                drop_path_rate=0.1,
+                camera=0,                # Single camera
+                view=0,                  # No view information used
+                sie_xishu=0.0,           # ICS disabled
+                local_feature=True,      # Local features enabled
+                num_classes=1,           # No class distinction
+            )
+        
+        else:
+            print("TransReID ViT model loading...")
+            self.model = VIT_BASE(
+                img_size=(256, 128),     # input image size
+                stride_size=16,          # patch (feature) extraction stride
+                drop_rate=0.0,
+                attn_drop_rate=0.0,
+                drop_path_rate=0.1,
+                camera=0,                # SIE 완전 비활성화
+                view=0,                  # SIE 완전 비활성화
+                sie_xishu=0.0,          # SIE 비율
+                local_feature=True,     # local feature extraction
+                num_classes=1           # number of classification classes
+            )
+        
         checkpoint = torch.load(self.config.reid_model_path)
         if 'state_dict' in checkpoint:
             state_dict = checkpoint['state_dict']
@@ -334,12 +351,9 @@ class EmbeddingComputer:
                 k = k[9:]
             new_state_dict[k] = v
         
-        model.load_state_dict(new_state_dict, strict=False)
-        model.eval()
-        model.cuda()
-
-
-        self.model = model
+        self.model.load_state_dict(new_state_dict, strict=False)
+        self.model.eval()
+        self.model.cuda()
 
     def dump_cache(self):
         if self.cache_name:

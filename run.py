@@ -49,8 +49,8 @@ def main():
     tracker = BoostTrack(BoostTrackConfig(
         reid_model_path='external/weights/vit_transreid_duke.pth',
         device='cuda',
-        max_age=10,
-        min_hits=30,
+        max_age=100,
+        min_hits=3,
         det_thresh=0.6,
         iou_threshold=0.3,
         lambda_iou=0.7,
@@ -65,7 +65,8 @@ def main():
         s_sim_corr=True, # Corrected shape similarity
         use_reid=True,
         use_cmc=False,
-        local_feature=True
+        local_feature=True,
+        SSL_VIT=False
     ))
 
     deque_list = deque(maxlen=3)
@@ -83,7 +84,7 @@ def main():
             continue
 
         results = model.predict(np_img, device='cuda', classes=[0] , augment = True , 
-                                iou = 0.7 , conf = 0.3 )
+                                iou = 0.45 , conf = 0.4 )
         
         for result in results:
             yolo_plot = result.plot()
