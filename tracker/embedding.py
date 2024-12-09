@@ -8,9 +8,10 @@ import cv2
 import torchvision
 import numpy as np
 import torchvision.transforms as T
-from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_BASE
-from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND # TransReID SSL VIT_BASE 16
-from .TransReID_SSL.transreid_pytorch.model.make_model import swin_base_patch4_window7_224 as SWIN_TRANSFORMER
+#from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_BASE
+#from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND # TransReID SSL VIT_BASE 16
+#from .TransReID_SSL.transreid_pytorch.model.make_model import swin_base_patch4_window7_224 as SWIN_TRANSFORMER
+from .TransReID_SSL.transreid_pytorch.model.backbones.Microsoft_swinv2_trasformer import SwinTransformerV2 as MS_Swin_Transformer_V2
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
@@ -32,7 +33,7 @@ class TransReIDConfig:
         SIE_COE: float = 3.0
         SIE_CAMERA: bool = True  # camera-aware
         SIE_VIEW: bool = False
-        
+          
         # Jigsaw Patch Module (JPM)
         JPM: bool = True
         
@@ -55,30 +56,27 @@ TransReID를 사용한 임베딩 계산
 class EmbeddingComputer:
     def __init__(self, config):
         self.model = None
-        self.device = config.device
-        self.dataset = config.dataset
-        self.test_dataset = True
         self.config = config
+        self.model_type = 'swinv2' if config.SSL_VIT else 'vit'
+        self.crop_size = (192, 192)
+        self.max_batch = 8
+        self.device = torch.device('cuda') 
         
-        if config.SSL_VIT:
-            self.crop_size = (384, 384)  # SWIN_TRASFORMER
-        else:
-            self.crop_size = (256, 128)  # TransReID*(ViT) 
-            
+        # 전처리 파이프라인 설정 -
+        self.transform = T.Compose([
+            T.ToPILImage(),  # numpy array를 PIL Image로 변환
+            T.Resize(self.crop_size),
+            T.ToTensor(),
+            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        ])
+        
         os.makedirs("./cache/embeddings/", exist_ok=True)
         self.cache_path = "./cache/embeddings/{}_embedding.pkl"
         self.cache = {}
         self.cache_name = ""
         self.grid_off = True
-        self.max_batch = 8
         
-        # TransReID 전처리 파이프라인
-        self.transform = T.Compose([
-            T.ToPILImage(),
-            T.Resize(self.crop_size),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        ])
+        self.initialize_model()
 
     def visualize_attention(self, feat, img):
         try:
@@ -205,89 +203,67 @@ class EmbeddingComputer:
                 self.cache = pickle.load(fp)
 
     def compute_embedding(self, img, bbox, tag):
-        if self.cache_name != tag.split(":")[0]:
-            self.load_cache(tag.split(":")[0])
-
-        # 캐시 키 생성 시 bbox 정보도 포함
-        cache_key = f"{tag}_{hash(str(bbox))}"
-        if cache_key in self.cache:
-            return self.cache[cache_key]
-
+        """이미지에서 검출된 객체의 임베딩을 계산합니다."""
         if self.model is None:
-            self.initialize_model()
-
-        # 이미지 크롭 및 전처리
-        crops = []
-        original_crops = []  # 원본 크롭 이미지 저장
-        h, w = img.shape[:2]
-        results = np.round(bbox).astype(np.int32)
-        results[:, 0] = results[:, 0].clip(0, w)
-        results[:, 1] = results[:, 1].clip(0, h)
-        results[:, 2] = results[:, 2].clip(0, w)
-        results[:, 3] = results[:, 3].clip(0, h)
-
-        for p in results:
-            crop = img[p[1]:p[3], p[0]:p[2]]
-            if crop.size == 0:  # 빈 크롭 체크
-                continue
-            if crop.shape[0] < 2 or crop.shape[1] < 2:  # 최소 크기 확인
-                continue
+            raise RuntimeError("Model is not initialized.")
             
-            original_crops.append(crop.copy())  # 원본 크롭 저장
-            
-            # BGR to RGB
-            crop = cv2.cvtColor(crop, cv2.COLOR_BGR2RGB)
-            
-            # TransReID 전처리
-            crop = self.transform(crop) # resize + Normalize
-            crops.append(crop)
-
-        if not crops:  # 유효한 크롭이 없는 경우
+        if len(bbox) == 0:
             return np.array([])
-
-        crops = torch.stack(crops)
-        crops = crops.to(self.device)
+            
+        # 캐시 확인
+        if tag != self.cache_name:
+            self.cache = {}
+            self.cache_name = tag
+            
+        # 배치 처리를 위한 준비
+        batch_size = min(self.max_batch, len(bbox))
+        n_batches = math.ceil(len(bbox) / batch_size)
+        embeddings = []
+        
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(bbox))
+            batch_bbox = bbox[start_idx:end_idx]
+            
+            # 배치 내의 각 객체에 대한 임베딩 계산
+            batch_tensors = []
+            for box in batch_bbox:
+                x1, y1, x2, y2 = map(int, box)
+                box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
                 
-        # 배치 처리
-        embs = []
-        with torch.no_grad():
-            for i in range(0, len(crops), self.max_batch):
-                batch = crops[i:i + self.max_batch]
-                try:
-                    # camera_label과 view_label 생성
-                    batch_size = batch.shape[0]
-                    camera_label = torch.zeros(batch_size).long().to(self.device)
-                    view_label = torch.zeros(batch_size).long().to(self.device)
+                if box_key in self.cache:
+                    embedding = self.cache[box_key]
+                else:
+                    # 이미지 크롭 및 전처리
+                    cropped = img[y1:y2, x1:x2]
+                    if cropped.size == 0:
+                        continue
+                        
+                    tensor = self.transform(cropped)
+                    batch_tensors.append(tensor)
                     
-                    # forward pass로 특징 추출
-                    feat = self.model(batch, cam_label=camera_label, view_label=view_label)
-                    print("forward result: ", feat.shape)
-                    
-                    # Swin Transformer는 이미 [batch_size, 1024] 형태로 출력됨
-                    # 추가 처리 없이 바로 사용
-                    embs.append(feat.cpu())
-                    
-                except RuntimeError as e:
-                    print(f"Error processing batch: {e}")
-                    print(f"Batch shape: {batch.shape}")
-                    continue
-
-        if not embs:  # 모든 배치가 실패한 경우
-            print("Warning: All batches failed to process")
-            return np.array([])
-
-        # 배치 결합 및 정규화
-        embs = torch.cat(embs, dim=0)  # [N, 1024] 형태로 결합
-        embs = F.normalize(embs, p=2, dim=1)  # L2 정규화
-        embs = embs.numpy()
+            if not batch_tensors:
+                continue
+                
+            # 배치 텐서 생성 및 GPU로 이동
+            batch_input = torch.stack(batch_tensors).to(self.device)
+            
+            # 임베딩 계산
+            with torch.no_grad():
+                batch_embeddings = self.model(batch_input)
+                
+            # 정규화 및 캐시 저장
+            batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
+            batch_embeddings = batch_embeddings.cpu().numpy()
+            
+            for j, box in enumerate(batch_bbox):
+                if j < len(batch_embeddings):
+                    x1, y1, x2, y2 = map(int, box)
+                    box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
+                    self.cache[box_key] = batch_embeddings[j]
+                    embeddings.append(batch_embeddings[j])
         
-        # 임베딩 norm 체크
-        norms = np.linalg.norm(embs, axis=1)
-        if not np.allclose(norms, 1.0, rtol=1e-5):
-            print(f"Warning: Embeddings not properly normalized. Norms: {norms}")
-        
-        self.cache[cache_key] = embs
-        return embs
+        return np.array(embeddings) if embeddings else np.array([])
 
     def compute_similarity(self, query_emb, gallery_embs, k=1):
         """
@@ -324,43 +300,47 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        import torch.nn as nn
-        if self.config.SSL_VIT: 
-            print("SSL Swin Transformer model loading...")
+        if self.model_type == 'swinv2':
+            print("Swin Transformer V2 model loading...")
+            
+            # Swin Transformer V2 설정값
+            init_args = {
+                'img_size': 192,
+                'patch_size': 4,
+                'embed_dim': 192,
+                'depths': [2, 2, 18, 2],
+                'num_heads': [6, 12, 24, 48],
+                'window_size': 12,
+                'mlp_ratio': 4.0,
+                'qkv_bias': True,
+                'drop_rate': 0.0,
+                'attn_drop_rate': 0.0,
+                'drop_path_rate': 0.2,
+                'patch_norm': True,
+                'use_checkpoint': False,
+                'pretrained_window_sizes': [12, 12, 12, 12]
+            }
 
-            # 이미지 크기를 정수로 변환하여 전달
-            img_size = max(self.crop_size)
+            print("Model initialization arguments:", init_args)
             
-            self.model = SWIN_TRANSFORMER(
-                img_size=img_size,     # 이미지 크기 (정수)
-                drop_rate=0.0,         # 드롭아웃 비율
-                attn_drop_rate=0.0,    # 어텐션 드롭아웃 비율
-                drop_path_rate=0.1,    # 드롭 패스 비율
-                camera_num=0,          # 카메라 수
-                view_num=0,            # 뷰 수
-                num_classes=1,    
-                patch_norm=True,
-                qkv_bias=True,
-            )
+            # 모델 초기화
+            self.model = MS_Swin_Transformer_V2(**init_args)
             
-            #print(self.model)
-            # 분류 헤드 제거 (특징 추출용)
+            self.model.to(self.device)
+            
+            # 분류 헤드 제거
             if hasattr(self.model, 'head'):
-                self.model.head = nn.Identity()
+                self.model.head = torch.nn.Identity()
             
-            # if hasattr(self.model , 'avgpool'):
-            #     self.model.avgpool = nn.Identity()
-                
-            print(self.model)
+            print(f"Model initialized on {self.device}")
             
-            print(f"Swin Transformer initialized with image size: {self.crop_size}")
-        
-        
-        
+            # 추론 모드로 설정
+            self.model.eval()
+            
         else:
             print("TransReID ViT model loading...")
             self.model = VIT_BASE(
-                img_size = self.img_size,     # input image size
+                img_size = self.crop_size,     # input image size
                 stride_size=16,          # patch (feature) extraction stride
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
@@ -390,7 +370,6 @@ class EmbeddingComputer:
         
         self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
-        self.model.cuda()
 
     def dump_cache(self):
         if self.cache_name:
