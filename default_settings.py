@@ -76,7 +76,7 @@ class GeneralSettings:
 
 class BoostTrackConfig:
     def __init__(self,
-                 reid_model_path: Union[str, Path] = '',
+                 reid_model_path: Union[str, Path] = 'external/weights/mot17_sbs_S50.pth',
                  device: str = 'cuda',
                  max_age: int = 30,
                  min_hits: int = 3,
@@ -104,12 +104,8 @@ class BoostTrackConfig:
         self.SSL_VIT = SSL_VIT
         
         self.local_feature = local_feature
-        
-        try:
-            self.reid_model_path = Path(reid_model_path)
-        except Exception as e:
-            raise Exception(f"Invalid reid_model_path: {reid_model_path}")
-        
+                
+        self.reid_model_path = Path(reid_model_path)
         self.device = device
         self.max_age = max_age
         self.min_hits = min_hits
