@@ -47,7 +47,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/SSL_MSMT.pth',
+        reid_model_path='external/weights/SSL_MARKET.pth',
         device='cuda',
         max_age=100,
         min_hits=3,
@@ -105,7 +105,7 @@ def main():
                                                GeneralSettings['min_box_area'])
 
         track_id_list = []
-        if args.visualize and idx in stop_frame_ids :
+        if args.visualize and idx in stop_frame_ids:
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
