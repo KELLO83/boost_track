@@ -10,7 +10,6 @@ import numpy as np
 import torchvision.transforms as T
 from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_BASE
 from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND # TransReID SSL VIT_BASE 16
-from .TransReID_SSL.transreid_pytorch.model.make_model import swin_base_patch4_window7_224 as SWIN_TRANSFORMER
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
@@ -61,7 +60,7 @@ class EmbeddingComputer:
         self.config = config
         
         if config.SSL_VIT:
-            self.crop_size = (384, 384)  # SWIN_TRASFORMER
+            self.crop_size = (384, 128)  # VIT Extend
         else:
             self.crop_size = (256, 128)  # TransReID*(ViT) 
             
@@ -314,41 +313,33 @@ class EmbeddingComputer:
     def initialize_model(self):
         import torch.nn as nn
         if self.config.SSL_VIT: 
-            print("SSL Swin Transformer model loading...")
+            print("SSL VIT Loading...")
 
             # 이미지 크기를 정수로 변환하여 전달
             img_size = max(self.crop_size)
             
-            self.model = SWIN_TRANSFORMER(
-                img_size=img_size,     # 이미지 크기 (정수)
-                drop_rate=0.0,         # 드롭아웃 비율
-                attn_drop_rate=0.0,    # 어텐션 드롭아웃 비율
-                drop_path_rate=0.1,    # 드롭 패스 비율
-                camera_num=0,          # 카메라 수
-                view_num=0,            # 뷰 수
-                num_classes=1,    
-                patch_norm=True,
-                qkv_bias=True,
+            self.model = VIT_EXTEND(
+                img_size=(384, 128),     # Larger resolution
+                stride_size=12,          # Adjusted stride to match new image size
+                drop_path_rate=0.1,
+                camera=0,                # Single camera
+                view=0,                  # No view information used
+                sie_xishu=0.0,           # ICS disabled
+                local_feature=True,      # Local features enabled
+                num_classes=1,           # No class distinction
             )
-            
-            #print(self.model)
-            # 분류 헤드 제거 (특징 추출용)
+        
             if hasattr(self.model, 'head'):
                 self.model.head = nn.Identity()
             
-            # if hasattr(self.model , 'avgpool'):
-            #     self.model.avgpool = nn.Identity()
-                
             print(self.model)
-            
-            print(f"Swin Transformer initialized with image size: {self.crop_size}")
-        
+
         
         
         else:
             print("TransReID ViT model loading...")
             self.model = VIT_BASE(
-                img_size = self.img_size,     # input image size
+                img_size = self.crop_size,     # input image size
                 stride_size=16,          # patch (feature) extraction stride
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
