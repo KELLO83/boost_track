@@ -10,6 +10,7 @@ import numpy as np
 import torchvision.transforms as T
 from .TransReID.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_BASE
 from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND # TransReID SSL VIT_BASE 16
+from .TransReID_SSL.transreid_pytorch.model.make_model import swin_base_patch4_window7_224 as SWIN_TRANSFORMER
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
@@ -60,7 +61,7 @@ class EmbeddingComputer:
         self.config = config
         
         if config.SSL_VIT:
-            self.crop_size = (384, 128)  # VIT-B/16+ICS
+            self.crop_size = (384, 384)  # SWIN_TRASFORMER
         else:
             self.crop_size = (256, 128)  # TransReID*(ViT) 
             
@@ -260,31 +261,10 @@ class EmbeddingComputer:
                     
                     # forward pass로 특징 추출
                     feat = self.model(batch, cam_label=camera_label, view_label=view_label)
-                    print(feat.shape)
-                    token_copy = feat.detach().clone()
+                    print("forward result: ", feat.shape)
                     
-                    if isinstance(feat, tuple):
-                        feat = feat[0]
-                    
-                    if not self.config.local_feature:
-                    # CLS 토큰만 사용
-                        feat = feat[:, 0 , :] # [1,768] 
-                    
-                    else:
-                        # 모든 토큰 사용 (CLS 토큰 + 패치 토큰)
-                        # feat shape: [B, N+1, D] where N is number of patches, D is embedding dimension
-                        #print(feat.shape) # torch.size([1 , 129 , 768]) # 129개의 토큰생성 
-                        feat = feat.mean(dim=1)  # [B, D] - 모든 토큰의 평균을 사용 [ 1 , 768]
-                    
-                    # #각 크롭에 대해 attention map 시각화
-                    # batch_crops = original_crops[i:i + self.max_batch]
-                    # for idx , crop_img in enumerate(batch_crops):
-                    #     try:
-                    #         self.visualize_attention(token_copy[idx:idx+1], crop_img)
-                    #     except Exception as e:
-                    #         print(f"Unexpected error in attention visualization: {e}")
-
-                    
+                    # Swin Transformer는 이미 [batch_size, 1024] 형태로 출력됨
+                    # 추가 처리 없이 바로 사용
                     embs.append(feat.cpu())
                     
                 except RuntimeError as e:
@@ -296,7 +276,8 @@ class EmbeddingComputer:
             print("Warning: All batches failed to process")
             return np.array([])
 
-        embs = torch.cat(embs, dim=0)
+        # 배치 결합 및 정규화
+        embs = torch.cat(embs, dim=0)  # [N, 1024] 형태로 결합
         embs = F.normalize(embs, p=2, dim=1)  # L2 정규화
         embs = embs.numpy()
         
@@ -343,25 +324,43 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        
+        import torch.nn as nn
         if self.config.SSL_VIT: 
-            print("SSL ViT model loading...")
-            self.crop_size = (384, 128)
-            self.model = VIT_EXTEND(
-                img_size=(384, 128),     # Larger resolution
-                stride_size=12,          # Adjusted stride to match new image size
-                drop_path_rate=0.1,
-                camera=0,                # Single camera
-                view=0,                  # No view information used
-                sie_xishu=0.0,           # ICS disabled
-                local_feature=True,      # Local features enabled
-                num_classes=1,           # No class distinction
+            print("SSL Swin Transformer model loading...")
+
+            # 이미지 크기를 정수로 변환하여 전달
+            img_size = max(self.crop_size)
+            
+            self.model = SWIN_TRANSFORMER(
+                img_size=img_size,     # 이미지 크기 (정수)
+                drop_rate=0.0,         # 드롭아웃 비율
+                attn_drop_rate=0.0,    # 어텐션 드롭아웃 비율
+                drop_path_rate=0.1,    # 드롭 패스 비율
+                camera_num=0,          # 카메라 수
+                view_num=0,            # 뷰 수
+                num_classes=1,    
+                patch_norm=True,
+                qkv_bias=True,
             )
+            
+            #print(self.model)
+            # 분류 헤드 제거 (특징 추출용)
+            if hasattr(self.model, 'head'):
+                self.model.head = nn.Identity()
+            
+            # if hasattr(self.model , 'avgpool'):
+            #     self.model.avgpool = nn.Identity()
+                
+            print(self.model)
+            
+            print(f"Swin Transformer initialized with image size: {self.crop_size}")
+        
+        
         
         else:
             print("TransReID ViT model loading...")
             self.model = VIT_BASE(
-                img_size=(256, 128),     # input image size
+                img_size = self.img_size,     # input image size
                 stride_size=16,          # patch (feature) extraction stride
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
@@ -389,7 +388,7 @@ class EmbeddingComputer:
                 k = k[9:]
             new_state_dict[k] = v
         
-        self.model.load_state_dict(new_state_dict, strict=False)
+        self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
         self.model.cuda()
 
