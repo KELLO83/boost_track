@@ -98,10 +98,10 @@ class BoostTrackConfig:
                  use_sb: bool = True,
                  use_vt: bool = True,
                  local_feature : bool = False,
-                 SSL_VIT : bool = False,
+                 model_name : str = 'dinov2',
                  ):
         
-        self.SSL_VIT = SSL_VIT
+        self.Model_Name = model_name
         
         self.local_feature = local_feature
         

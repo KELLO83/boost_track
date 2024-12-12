@@ -11,7 +11,7 @@ from tqdm import tqdm
 import random
 from natsort import natsorted
 from collections import deque
-
+import os
 id = {}
 
 def get_id_color(id):
@@ -39,6 +39,16 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2'] , default='convNext',
+                        help="""
+                        Select model type:
+                        - convNext : ConvNext-B
+                        - dinov2 : Dinov2-B
+                        - swinv2 : Swin-B
+                        """)
+    parser.add_argument("--reid_model", type=str, 
+                        default='convnext_large_1k_384.pth')
+    
     args = parser.parse_args()
 
     # 설정
@@ -47,7 +57,7 @@ def main():
 
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
-        reid_model_path='external/weights/Micrsorft_swinv2_large_patch4_window12_192_22k.pth',
+        reid_model_path=f'external/weights/{args.reid_model}',
         device='cuda',
         max_age=100,
         min_hits=3,
@@ -66,7 +76,7 @@ def main():
         use_reid=True,
         use_cmc=False,
         local_feature=True,
-        SSL_VIT = True,
+        model_name = args.model_name,
     ))
 
     deque_list = deque(maxlen=3)
@@ -74,7 +84,7 @@ def main():
     
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     
-    stop_frame_ids = [145, 573]
+    stop_frame_ids = [145, 573 , 600 , 650 , 673]
     for idx , img_name in enumerate(tqdm(img_list)):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)
@@ -105,7 +115,7 @@ def main():
                                                GeneralSettings['min_box_area'])
 
         track_id_list = []
-        if args.visualize and idx in stop_frame_ids:
+        if args.visualize :
             vis_img = np_img.copy()
             for tlwh, track_id in zip(tlwhs, ids):
                 x1, y1, w, h = tlwh
@@ -118,21 +128,24 @@ def main():
                 
                 if track_id not in track_id_list:
                     track_id_list.append(int(track_id))                    
-
-                
+            
+            if idx in stop_frame_ids:
                 cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
-        
-            cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
-            cv2.imshow('yolo', yolo_plot)
-            cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
-            cv2.imshow('Tracking', vis_img)
-            if cv2.waitKey(0) & 0xFF == ord('q'):
-                break
+            
+                os.makedirs('result224', exist_ok=True)
+                cv2.imwrite(f'result224/{idx}.jpg', vis_img)
+                
+            # cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
+            # cv2.imshow('yolo', yolo_plot)
+            # cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
+            # cv2.imshow('Tracking', vis_img)
+            # if cv2.waitKey(0) & 0xFF == ord('q'):
+            #     break
             
             deque_list.append(vis_img)
-        print(sorted(track_id_list))
+        print("track id list :" , sorted(track_id_list))
         
         
 
