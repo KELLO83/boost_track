@@ -1,3 +1,4 @@
+from ast import mod
 from collections import OrderedDict
 from pathlib import Path
 import os
@@ -33,7 +34,7 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-        elif config.Model_Name == 'Clip':
+        elif config.Model_Name == 'Clip' or config.Model_Name == 'CLIP_RGB':
             self.crop_size = (224,240)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -84,52 +85,62 @@ class EmbeddingComputer:
             end_idx = min((i + 1) * batch_size, len(bbox))
             batch_bbox = bbox[start_idx:end_idx]
             
-            # 배치 내의 각 객체에 대한 임베딩 계산
-            batch_tensors = []
+            # 배치 내의 각 객체에 대한 이미지 크롭
+            img_crops = []
             for box in batch_bbox:
                 x1, y1, x2, y2 = map(int, box)
                 box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
                 
                 if box_key in self.cache:
-                    embedding = self.cache[box_key]
-                else:
-                    # 이미지 크롭 및 전처리
-                    cropped = img[y1:y2, x1:x2]
-                    if cropped.size == 0:
-                        continue
-                        
-                    tensor = self.transform(cropped)
-                    batch_tensors.append(tensor)
+                    embeddings.append(self.cache[box_key])
+                    continue
                     
-            if not batch_tensors:
+                cropped = img[y1:y2, x1:x2]
+                if cropped.size == 0:
+                    continue
+                    
+                img_crops.append(cropped)
+            
+            if not img_crops:
                 continue
                 
-            # 배치 텐서 생성 및 GPU로 이동
-            batch_input = torch.stack(batch_tensors).to(self.device)
+            # 이미지 전처리 및 RGB 통계 계산
+            preprocessed = self._preprocess_crops(img_crops , self.crop_size)
+            if preprocessed is None:
+                continue
+                
+            # RGB_CLIP 모델인 경우 이미지와 RGB 통계를 분리
+            if self.model_type == 'CLIP_RGB':
+                batch_input, rgb_stats_batch = preprocessed
+            else:
+                batch_input = preprocessed
             
             # 임베딩 계산
             with torch.no_grad():
-                if self.model_type == 'Clip': # CLIP 전용 forward 추론
+                if self.model_type == 'CLIP_RGB':
+                    batch_embeddings = self.model(batch_input, rgb_stats=rgb_stats_batch)
+                elif self.model_type == 'Clip':
                     image_features = self.model.encode_image(batch_input)
                     batch_embeddings = image_features[-1]
-                    
                 else:
-                    batch_embeddings = self.model(batch_input) 
-                
-                if self.model_type == 'Clip': # cls토큰만을 사용
-                    batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
-                    
+                    batch_embeddings = self.model(batch_input)
                 
             # 정규화 및 캐시 저장
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
             batch_embeddings = batch_embeddings.cpu().numpy()
             
-            for j, box in enumerate(batch_bbox):
-                if j < len(batch_embeddings):
-                    x1, y1, x2, y2 = map(int, box)
-                    box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
-                    self.cache[box_key] = batch_embeddings[j]
-                    embeddings.append(batch_embeddings[j])
+            # 캐시에 저장
+            current_idx = 0
+            for box in batch_bbox:
+                if current_idx >= len(batch_embeddings):
+                    break
+                    
+                x1, y1, x2, y2 = map(int, box)
+                box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
+                if box_key not in self.cache:  # 아직 캐시되지 않은 경우만 저장
+                    self.cache[box_key] = batch_embeddings[current_idx]
+                    embeddings.append(batch_embeddings[current_idx])
+                    current_idx += 1
         
         return np.array(embeddings) if embeddings else np.array([])
 
@@ -171,6 +182,63 @@ class EmbeddingComputer:
         from tracker.CLIP.model.clip.model import CLIP, build_model
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
+        
+        if self.model_type == 'CLIP_RGB':
+            from  tracker.CLIP.model.clip.model import RGBEncodedCLIP
+            embed_dim = 768                  
+            image_resolution = 232          # 14.5x16≈232
+            h_resolution = 14              # 패치 개수로 직접 지정
+            w_resolution = 15              # 패치 개수로 직접 지정 (14x15=210)
+            vision_layers = 12             
+            vision_width = 768             # Base 모델 width
+            vision_patch_size = 16         
+            vision_stride_size = 16        
+            context_length = 77            
+            vocab_size = 49408            
+            transformer_width = 512        
+            transformer_heads = 8          
+            transformer_layers = 12        
+        
+            model = RGBEncodedCLIP(
+                embed_dim=embed_dim,
+                image_resolution=image_resolution,
+                vision_layers=vision_layers,
+                vision_width=vision_width,
+                vision_patch_size=vision_patch_size,
+                vision_stride_size=vision_stride_size,
+                context_length=context_length,
+                vocab_size=vocab_size,
+                transformer_width=transformer_width,
+                transformer_heads=transformer_heads,
+                transformer_layers=transformer_layers,
+                h_resolution=h_resolution,
+                w_resolution=w_resolution
+            )
+            
+            
+                        # 샘플 입력 생성
+            input_dummy = torch.randn(1, 3, 224, 240).to(self.device)  # 이미지 입력
+
+            # RGB 통계 샘플 생성 (mean과 std 각각 3차원)
+            rgb_mean = torch.tensor([[0.5, 0.4, 0.3]]).to(self.device)  # 예시 RGB 평균값
+            rgb_std = torch.tensor([[0.2, 0.2, 0.2]]).to(self.device)   # 예시 RGB 표준편차
+            rgb_stats = torch.cat([rgb_mean, rgb_std], dim=1)      # [1, 6] 형태로 결합
+            
+            
+            model = model.to(self.device)
+            model.load_state_dict(torch.load(weight_path) , strict = False)
+            
+            
+            with torch.no_grad():
+                # 이미지와 RGB 통계로 유사도 계산
+                similarity = model(input_dummy, rgb_stats)
+                print("Image-RGB Similarity:", similarity)
+                print("Similarity Shape:", similarity.shape)
+
+            self.model = model
+            return
+        
+        
         if self.model_type == 'Clip':
             # CLIP_Reid Base
             embed_dim = 768                  
@@ -353,3 +421,36 @@ class EmbeddingComputer:
         self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
 
+    def _preprocess_crops(self, img_crops , img_size):
+        if len(img_crops) == 0:
+            return None
+            
+        batch_tensors = []
+        rgb_stats_list = []
+        
+        for img in img_crops:
+            if img.size == 0:
+                continue
+            
+            # RGB 통계 계산 (리사이즈 전 원본 이미지에서)
+            if self.model_type == 'CLIP_RGB':
+                rgb_mean = np.mean(img, axis=(0, 1))  # [3]
+                rgb_std = np.std(img, axis=(0, 1))    # [3]
+                rgb_stats = np.concatenate([rgb_mean, rgb_std])  # [6]
+                rgb_stats_list.append(rgb_stats)
+            
+            # 모든 이미지를 224x240 크기로 리사이즈
+            resized = cv2.resize(img, img_size , interpolation=cv2.INTER_CUBIC)
+            tensor = self.transform(resized)
+            batch_tensors.append(tensor)
+            
+        if len(batch_tensors) == 0:
+            return None
+            
+        batch_input = torch.stack(batch_tensors).to(self.device)
+        
+        if self.model_type == 'CLIP_RGB':
+            rgb_stats_batch = torch.tensor(np.stack(rgb_stats_list), device=self.device)
+            return batch_input, rgb_stats_batch
+        else:
+            return batch_input

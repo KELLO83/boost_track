@@ -40,13 +40,14 @@ def main():
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','Clip'] ,
-                        default='Clip',
+                        default='CLIP_RGB',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
                         - dinov2 : Dinov2-B
                         - swinv2 : Swin-B
-                        - Clip : CLip_base
+                        - Clip : CLip_base_only image
+                        - CLIP_RGB : CLIP_RGB DIVATION IMAGE COMBINATION
                         """)
     parser.add_argument("--reid_model", type=str, 
                         default='CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth')
