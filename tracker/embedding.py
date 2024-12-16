@@ -33,6 +33,15 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
+        elif config.Model_Name == 'Clip':
+            self.crop_size = (224,240)
+            self.transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize(self.crop_size),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+            
         else:
             self.crop_size = (384, 384)
             self.transform = T.Compose([
@@ -47,6 +56,10 @@ class EmbeddingComputer:
         self.max_batch = 8
         self.device = torch.device('cuda') 
         self.initialize_model()
+        
+        self.cache_path = "./cache/embeddings/{}_embedding.pkl"
+        self.cache = {}
+        self.cache_name = ""
         
     def compute_embedding(self, img, bbox, tag):
         """이미지에서 검출된 객체의 임베딩을 계산합니다."""
@@ -96,7 +109,16 @@ class EmbeddingComputer:
             
             # 임베딩 계산
             with torch.no_grad():
-                batch_embeddings = self.model(batch_input)
+                if self.model_type == 'Clip': # CLIP 전용 forward 추론
+                    image_features = self.model.encode_image(batch_input)
+                    batch_embeddings = image_features[-1]
+                    
+                else:
+                    batch_embeddings = self.model(batch_input) 
+                
+                if self.model_type == 'Clip': # cls토큰만을 사용
+                    batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
+                    
                 
             # 정규화 및 캐시 저장
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
@@ -146,26 +168,91 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
+        from tracker.CLIP.model.clip.model import CLIP, build_model
         print("Model type : ", self.model_type)
+        weight_path = self.config.reid_model_path
+        if self.model_type == 'Clip':
+            # CLIP_Reid Base
+            embed_dim = 768                  
+            image_resolution = 232          # 14.5x16≈232
+            h_resolution = 14              # 패치 개수로 직접 지정
+            w_resolution = 15              # 패치 개수로 직접 지정 (14x15=210)
+            vision_layers = 12             
+            vision_width = 768             # Base 모델 width
+            vision_patch_size = 16         
+            vision_stride_size = 16        
+            context_length = 77            
+            vocab_size = 49408            
+            transformer_width = 512        
+            transformer_heads = 8          
+            transformer_layers = 12        
+        
+        
+        
+            model = CLIP(
+                embed_dim=embed_dim,
+                image_resolution=image_resolution,
+                vision_layers=vision_layers,
+                vision_width=vision_width,
+                vision_patch_size=vision_patch_size,
+                vision_stride_size=vision_stride_size,
+                context_length=context_length,
+                vocab_size=vocab_size,
+                transformer_width=transformer_width,
+                transformer_heads=transformer_heads,
+                transformer_layers=transformer_layers,
+                h_resolution=h_resolution,
+                w_resolution=w_resolution
+            )
 
+            model.load_state_dict(torch.load(weight_path), strict=False)
+            model.to(self.device)
+            self.model = model
+        
+            return
+        
+        
         if self.model_type == 'convNext':
-            print("ConvNeXt model loading...")
+            config_model ={
+                'xlarge':{
+                    'depths':[3, 3, 27, 3],
+                    'dims':[256, 512, 1024, 2048]
+                },
+                'large':{
+                    'depths':[3, 3, 27, 3],
+                    'dims':[192, 384, 768, 1536]
+                },
+                'base':{
+                    'depths':[3, 3, 27, 3],
+                    'dims':[128, 256, 512, 1024]                            
+                },
+                'small':{
+                    'depths':[3, 3, 27, 3],
+                    'dims':[96, 192, 384, 768]
+                }
+                
+            }
+            SIZE = str(self.config.reid_model_path).split('/')[-1].split('_')[1]
             
+            
+            print(f"ConvNeXt model loading {SIZE}...")
+
             # ConvNeXt 모델 초기화 (Base 모델 기준)
             model = ConvNeXt(
-                depths=[3, 3, 27, 3],           # 각 스테이지의 블록 수
-                dims=[192, 384, 768, 1536],     # 각 스테이지의 채널 수
+                depths = config_model[SIZE]['depths'],
+                dims = config_model[SIZE]['dims']
             )
+            
+            model.to("cuda")
             if hasattr(model, 'head'):
                 model.head = torch.nn.Identity()
             
-            print(model)
-            input_dummy = torch.randn(1, 3, 384, 384)
-            print(model(input_dummy).shape)
+            
+            #print(model)
+            #input_dummy = torch.randn(1, 3, 384, 384).to("cuda")
+            #print(model(input_dummy).shape)
             
             # 분류 헤드 제거 (특징 추출만 사용)
-
-            model.to(self.device)
             model.eval()
             
             # 사전학습된 가중치 로드

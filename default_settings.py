@@ -1,6 +1,6 @@
 from typing import Union, Dict, Tuple
 from pathlib import Path
-
+import os
 
 def get_detector_path_and_im_size(args) -> Tuple[str, Tuple[int, int]]:
     if args.dataset == "mot17":
@@ -105,11 +105,9 @@ class BoostTrackConfig:
         
         self.local_feature = local_feature
         
-        try:
-            self.reid_model_path = Path(reid_model_path)
-        except Exception as e:
+        if not os.path.exists(reid_model_path):
             raise Exception(f"Invalid reid_model_path: {reid_model_path}")
-        
+        self.reid_model_path = reid_model_path
         self.device = device
         self.max_age = max_age
         self.min_hits = min_hits

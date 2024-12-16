@@ -39,15 +39,17 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2'] , default='convNext',
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','Clip'] ,
+                        default='Clip',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
                         - dinov2 : Dinov2-B
                         - swinv2 : Swin-B
+                        - Clip : CLip_base
                         """)
     parser.add_argument("--reid_model", type=str, 
-                        default='convnext_large_1k_384.pth')
+                        default='CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth')
     
     args = parser.parse_args()
 
@@ -78,7 +80,8 @@ def main():
         local_feature=True,
         model_name = args.model_name,
     ))
-
+    
+    
     deque_list = deque(maxlen=3)
     tracking_flag = False
     
@@ -113,7 +116,6 @@ def main():
         tlwhs, ids, confs = utils.filter_targets(targets, 
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
-
         track_id_list = []
         if args.visualize :
             vis_img = np_img.copy()
@@ -128,21 +130,27 @@ def main():
                 
                 if track_id not in track_id_list:
                     track_id_list.append(int(track_id))                    
-            
-            if idx in stop_frame_ids:
+
                 cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
                 cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10), 
                            cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
-            
-                os.makedirs('result224', exist_ok=True)
-                cv2.imwrite(f'result224/{idx}.jpg', vis_img)
+
                 
             # cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
             # cv2.imshow('yolo', yolo_plot)
             # cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
             # cv2.imshow('Tracking', vis_img)
-            # if cv2.waitKey(0) & 0xFF == ord('q'):
-            #     break
+            if cv2.waitKey(0) & 0xFF == ord('q'):
+                break
+            
+
+            if idx in stop_frame_ids:
+                model_name = os.path.splitext(args.reid_model)[0]
+
+                save_dir = f'{model_name}_results'
+                os.makedirs(save_dir, exist_ok=True)
+        
+                cv2.imwrite(os.path.join(save_dir, f'{idx}.jpg'), vis_img)
             
             deque_list.append(vis_img)
         print("track id list :" , sorted(track_id_list))
