@@ -33,7 +33,7 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-        elif config.Model_Name == 'Clip':
+        elif config.Model_Name == 'CLIP':
             self.crop_size = (224,240)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -109,14 +109,14 @@ class EmbeddingComputer:
             
             # 임베딩 계산
             with torch.no_grad():
-                if self.model_type == 'Clip': # CLIP 전용 forward 추론
+                if self.model_type == 'CLIP': # CLIP 전용 forward 추론
                     image_features = self.model.encode_image(batch_input)
                     batch_embeddings = image_features[-1]
                     
                 else:
                     batch_embeddings = self.model(batch_input) 
                 
-                if self.model_type == 'Clip': # cls토큰만을 사용
+                if self.model_type == 'CLIP': # cls토큰만을 사용
                     batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
                     
                 
@@ -171,7 +171,7 @@ class EmbeddingComputer:
         from tracker.CLIP.model.clip.model import CLIP, build_model
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
-        if self.model_type == 'Clip':
+        if self.model_type == 'CLIP':
             # CLIP_Reid Base
             embed_dim = 768                  
             image_resolution = 232          # 14.5x16≈232
