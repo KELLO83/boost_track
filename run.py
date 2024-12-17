@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam0")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP'] ,
-                        default='CLIP',
+                        default='swinv2',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
@@ -49,7 +49,7 @@ def main():
                         - CLIP : CLIP_base
                         """)
     parser.add_argument("--reid_model", type=str, 
-                        default='CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth')
+                        default='swinv2_large_patch4_window12to24_192to384_22kto1k_ft.pth')
     
     args = parser.parse_args()
 
