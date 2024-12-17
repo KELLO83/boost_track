@@ -49,7 +49,7 @@ def main():
                         - CLIP : CLIP_base
                         """)
     parser.add_argument("--reid_model", type=str, 
-                        default='swinv2_large_patch4_window12to24_192to384_22kto1k_ft.pth')
+                        default='Micrsorft_swinv2_large_patch4_window12_192_22k')
     
     args = parser.parse_args()
 

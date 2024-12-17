@@ -9,7 +9,7 @@ import torchvision
 import numpy as np
 import torchvision.transforms as T
 from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
-from .TransReID_SSL.transreid_pytorch.model.backbones.Microsoft_swinv2_trasformer import SwinTransformerV2 as MS_Swin_Transformer_V2
+from .MS_Swin_Transformer.models.swin_transformer_v2 import SwinTransformerV2 as MS_Swin_Transformer_V2
 from .ConvNeXt.models.convnext import ConvNeXt
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
@@ -169,6 +169,7 @@ class EmbeddingComputer:
 
     def initialize_model(self):
         from tracker.CLIP.model.clip.model import CLIP, build_model
+        
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
         if self.model_type == 'CLIP':
