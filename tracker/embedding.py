@@ -8,7 +8,7 @@ import cv2
 import torchvision
 import numpy as np
 import torchvision.transforms as T
-from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
+#from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
 from .MS_Swin_Transformer.models.swin_transformer_v2 import SwinTransformerV2 as MS_Swin_Transformer_V2
 from .ConvNeXt.models.convnext import ConvNeXt
 from dataclasses import dataclass
@@ -35,6 +35,15 @@ class EmbeddingComputer:
             ])
         elif config.Model_Name == 'CLIP':
             self.crop_size = (224,240)
+            self.transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize(self.crop_size),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+            
+        elif config.Model_Name == 'swinv2':
+            self.crop_size = (192 , 192)
             self.transform = T.Compose([
                 T.ToPILImage(),
                 T.Resize(self.crop_size),
@@ -105,14 +114,14 @@ class EmbeddingComputer:
                 continue
                 
             # 배치 텐서 생성 및 GPU로 이동
-            batch_input = torch.stack(batch_tensors).to(self.device)
+            batch_input = torch.stack(batch_tensors)
+            batch_input = batch_input.to(self.device, non_blocking=True)  # non_blocking=True로 설정하여 성능 향상
             
             # 임베딩 계산
             with torch.no_grad():
                 if self.model_type == 'CLIP': # CLIP 전용 forward 추론
                     image_features = self.model.encode_image(batch_input)
                     batch_embeddings = image_features[-1]
-                    
                 else:
                     batch_embeddings = self.model(batch_input) 
                 
@@ -120,7 +129,7 @@ class EmbeddingComputer:
                     batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
                     
                 
-            # 정규화 및 캐시 저장
+            # GPU에서 정규화 수행 후 CPU로 이동
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
             batch_embeddings = batch_embeddings.cpu().numpy()
             
@@ -311,15 +320,24 @@ class EmbeddingComputer:
 
             self.model = MS_Swin_Transformer_V2(**init_args)
             
-            self.model.to(self.device)
-
-            if hasattr(self.model, 'head'): # MLP 제거 특징맵 사용
-                self.model.head = torch.nn.Identity()
+            # 모델을 GPU로 이동
+            self.model = self.model.to(self.device)
+            
+            # head를 Identity로 변경하고 GPU로 이동
+            if hasattr(self.model, 'head'):
+                self.model.head = torch.nn.Identity().to(self.device)
+            
+            # 모델의 모든 파라미터가 GPU로 이동했는지 확인
+            for param in self.model.parameters():
+                if param.device != self.device:
+                    print(f"Warning: Parameter found on {param.device}, moving to {self.device}")
+                    param.data = param.data.to(self.device)
             
             print(f"Model initialized on {self.device}")
+            print(f"Model parameters device check: {next(self.model.parameters()).device}")
             
             self.model.eval()
-            
+        
         else:
             print("TransReID ViT model loading...")
             self.model = VIT_EXTEND(
@@ -353,4 +371,3 @@ class EmbeddingComputer:
         
         self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
-
