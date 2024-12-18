@@ -38,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
-    parser.add_argument("--img_path", type=str, default="plane/cam0")
+    parser.add_argument("--img_path", type=str, default="plane/cam2")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP'] ,
                         default='swinv2',
                         help="""
