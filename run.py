@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP'] ,
-                        default='swinv2',
+                        default='convNext',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
@@ -48,9 +48,15 @@ def main():
                         - swinv2 : Swin-B
                         - CLIP : CLIP_base
                         """)
-    parser.add_argument("--reid_model", type=str, 
-                        default='Micrsorft_swinv2_large_patch4_window12_192_22k.pth')
     
+    parser.add_argument("--reid_model", type=str, 
+                        default='convnext_xlarge_22k_1k_384_ema.pth')
+    """
+    
+    swin v2 = Micrsorft_swinv2_large_patch4_window12_192_22k
+    convnext = convnext_xlarge_22k_1k_384_ema
+
+    """
     args = parser.parse_args()
 
     # 설정
