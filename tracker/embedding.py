@@ -9,8 +9,6 @@ import torchvision
 import numpy as np
 import torchvision.transforms as T
 #from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
-from .MS_Swin_Transformer.models.swin_transformer_v2 import SwinTransformerV2 as MS_Swin_Transformer_V2
-from .ConvNeXt.models.convnext import ConvNeXt
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
@@ -86,6 +84,7 @@ class EmbeddingComputer:
         # 배치 처리를 위한 준비
         batch_size = min(self.max_batch, len(bbox))
         n_batches = math.ceil(len(bbox) / batch_size)
+        batch_image = []
         embeddings = []
         
         for i in range(n_batches):
@@ -104,6 +103,7 @@ class EmbeddingComputer:
                 else:
                     # 이미지 크롭 및 전처리
                     cropped = img[y1:y2, x1:x2]
+                    batch_image.append(cropped) # CLIP_RGB 에서 이미지의 rgb분포도를 사용하기위하여
                     if cropped.size == 0:
                         continue
                         
@@ -119,19 +119,27 @@ class EmbeddingComputer:
             
             # 임베딩 계산
             with torch.no_grad():
-                if self.model_type == 'CLIP': # CLIP 전용 forward 추론
-                    image_features = self.model.encode_image(batch_input)
-                    batch_embeddings = image_features[-1]
-                else:
-                    batch_embeddings = self.model(batch_input) 
                 
-                if self.model_type == 'CLIP': # cls토큰만을 사용
-                    batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
+                if self.model_type == 'CLIP_RGB':
+                    preprocessed = self.preprocess_with_rgb_stats(batch_img)
+                    batch_input, rgb_stats_batch = preprocessed 
+                    batch_embeddings = self.model(batch_input , rgb_stats_batch) # [1,211,768]
                     
+                if self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론
+                    image_features = self.model.encode_image(batch_input) # CLIP 는 3가지 특징맵을 반환함
+                    batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 211, 768]
+                    batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
                 
+                else: # SWINV2 , CONVNEXT
+                    batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048]
+                
+        
+            print("batch_embeddings : ", batch_embeddings.shape)
+            
             # GPU에서 정규화 수행 후 CPU로 이동
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
             batch_embeddings = batch_embeddings.cpu().numpy()
+            
             
             for j, box in enumerate(batch_bbox):
                 if j < len(batch_embeddings):
@@ -177,8 +185,8 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        from tracker.CLIP.model.clip.model import CLIP, build_model
-        
+        from tracker.CLIP.model.clip.model import CLIP 
+               
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
         if self.model_type == 'CLIP':
@@ -223,6 +231,8 @@ class EmbeddingComputer:
         
         
         if self.model_type == 'convNext':
+
+            from .ConvNeXt.models.convnext import ConvNeXt
             config_model ={
                 'xlarge':{
                     'depths':[3, 3, 27, 3],
@@ -296,6 +306,7 @@ class EmbeddingComputer:
             return
         
         if self.model_type == 'swinv2':
+            from .MS_Swin_Transformer.models.swin_transformer_v2 import SwinTransformerV2 as MS_Swin_Transformer_V2
             print("Swin Transformer V2 model loading...")
             
             # Swin Transformer V2 설정값
@@ -371,3 +382,30 @@ class EmbeddingComputer:
         
         self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
+
+
+
+    def preprocess_with_rgb_stats(self, batch_img):
+        """
+        RGB 통계를 사용하여 이미지 배치를 전처리합니다.
+        Args:
+            batch_img: 전처리할 이미지 배치
+        Returns:
+            tuple: (전처리된 이미지 텐서, RGB 통계 텐서)
+        """
+        processed_batch = []
+        for img in batch_img:
+            processed = self.transform(img)
+            processed_batch.append(processed)
+        
+        batch_tensor = torch.stack(processed_batch).to(self.device)
+        
+        # RGB 통계 계산 (mean과 std 각각 3차원)
+        rgb_mean = torch.tensor([[0.5, 0.4, 0.3]]).to(self.device)  # RGB 평균값
+        rgb_std = torch.tensor([[0.2, 0.2, 0.2]]).to(self.device)   # RGB 표준편차
+        rgb_stats = torch.cat([rgb_mean, rgb_std], dim=1)      # [1, 6] 형태로 결합
+        
+        # 배치 크기만큼 RGB 통계 복제
+        rgb_stats_batch = rgb_stats.repeat(len(batch_img), 1)
+        
+        return batch_tensor, rgb_stats_batch

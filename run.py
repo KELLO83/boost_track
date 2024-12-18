@@ -39,24 +39,29 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP'] ,
-                        default='convNext',
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB'] ,
+                        default='swinv2',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
                         - dinov2 : Dinov2-B
                         - swinv2 : Swin-B
-                        - CLIP : CLIP_base
+                        - CLIP : CLIP_base # Image Forward
+                        - CLIP_RGB : CLIP + RGB AVERAGE DIVIATION
+                        
                         """)
     
     parser.add_argument("--reid_model", type=str, 
-                        default='convnext_xlarge_22k_1k_384_ema.pth')
+                        default='Micrsorft_swinv2_large_patch4_window12_192_22k.pth')
+    
     """
     
     swin v2 = Micrsorft_swinv2_large_patch4_window12_192_22k
     convnext = convnext_xlarge_22k_1k_384_ema
-
+    CLIP = CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth
+    
     """
+    
     args = parser.parse_args()
 
     # 설정
@@ -92,6 +97,7 @@ def main():
     tracking_flag = False
     
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
+    
     
     stop_frame_ids = [145, 573 , 600 , 650 , 673]
     for idx , img_name in enumerate(tqdm(img_list)):

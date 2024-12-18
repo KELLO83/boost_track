@@ -1,5 +1,5 @@
 import torch
-from tracker.CLIP.model.clip.model import CLIP, build_model
+from tracker.CLIP.model.clip.model import RGBEncodedCLIP
 
 # CLIP_Reid Base
 embed_dim = 768                  
@@ -16,8 +16,8 @@ transformer_width = 512
 transformer_heads = 8          
 transformer_layers = 12        
 
-# CLIP 모델 생성
-model = CLIP(
+# RGBEncodedCLIP 모델 생성
+model = RGBEncodedCLIP(
     embed_dim=embed_dim,
     image_resolution=image_resolution,
     vision_layers=vision_layers,
@@ -33,30 +33,42 @@ model = CLIP(
     w_resolution=w_resolution
 )
 
-# 사전 학습된 가중치 로드 (선택사항)
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-else:
-    device = torch.device("cpu")
+# 사전 학습된 가중치 로드
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 model = model.to(device)
 
 weight_path = 'external/weights/CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth'
 model.load_state_dict(torch.load(weight_path), strict=False)
-print(model)
 print("Model loaded successfully!")
 
-# Base 모델 입력 크기
-input_dummy = torch.randn(1, 3, 224, 240).to(device)  # h=224(14패치), w=240(15패치)
+# 샘플 입력 생성
+input_dummy = torch.randn(1, 3, 224, 240).to(device)  # 이미지 입력
+
+# RGB 통계 샘플 생성 (mean과 std 각각 3차원)
+rgb_mean = torch.tensor([[0.5, 0.4, 0.3]]).to(device)  # 예시 RGB 평균값
+rgb_std = torch.tensor([[0.2, 0.2, 0.2]]).to(device)   # 예시 RGB 표준편차
+rgb_stats = torch.cat([rgb_mean, rgb_std], dim=1)      # [1, 6] 형태로 결합
 
 # 모델 추론
 with torch.no_grad():
-    # 이미지 특징만 추출
-    image_features = model.encode_image(input_dummy)  # text 없이 이미지 인코딩만 수행
-    print("Image features value:", image_features[-1])  # [1, 768] for Large model
-    print("Image features shape:", image_features[-1].shape)
+    # 이미지와 RGB 통계로 유사도 계산
+    similarity = model(input_dummy, rgb_stats)
+    print("Similarity Shape:", similarity.shape)
+
+
+print(model)
+
+
+# # Base 모델 입력 크기
+# input_dummy = torch.randn(1, 3, 224, 240).to(device)  # h=224(14패치), w=240(15패치)
+
+# # 모델 추론
+# with torch.no_grad():
+#     # 이미지 특징만 추출
+#     image_features = model.encode_image(input_dummy)  # text 없이 이미지 인코딩만 수행
+#     print("Image features value:", image_features[-1])  # [1, 768] for Large model
+#     print("Image features shape:", image_features[-1].shape)
     
     
-    for i in image_features:
-        print(i.shape)
-        
-        
+#     for i in image_features:
+#         print(i.shape)
