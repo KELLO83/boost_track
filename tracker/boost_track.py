@@ -33,8 +33,6 @@ def convert_bbox_to_z(bbox):
     return np.array([x, y, h, r]).reshape((4, 1))
 
 
-
-
 def convert_x_to_bbox(x, score=None):
     """
     Takes a bounding box in the centre form [x,y,h,r] and returns it in the form
@@ -71,6 +69,10 @@ class KalmanBoxTracker(object):
         KalmanBoxTracker.count += 1
 
         self.kf = KalmanFilter(self.bbox_to_z_func(bbox))
+        # 입력 임베딩이 [14, 768] 형태인 경우 평균을 내서 [768] 형태로 저장
+        if emb is not None and len(emb.shape) == 2 and emb.shape[0] == 14:
+            emb = np.mean(emb, axis=0)
+            emb = emb / np.linalg.norm(emb)
         self.emb = emb
         self.hit_streak = 0
         self.age = 0
@@ -119,6 +121,10 @@ class KalmanBoxTracker(object):
         return self.x_to_bbox_func(self.kf.x)
 
     def update_emb(self, emb, alpha=0.9):
+        # 입력 임베딩이 [14, 768] 형태인 경우 평균을 내서 [768] 형태로 저장
+        if len(emb.shape) == 2 and emb.shape[0] == 14:
+            emb = np.mean(emb, axis=0)
+            emb = emb / np.linalg.norm(emb)
         self.emb = alpha * self.emb + (1 - alpha) * emb
         self.emb /= np.linalg.norm(self.emb)
 
@@ -222,8 +228,8 @@ class BoostTrack(object):
                 trk_embs.append(self.trackers[t].get_emb())
             trk_embs = np.array(trk_embs)  # shape: [M, D] where M=트래커 수, D=768
             
-            # 검출된 객체와 추적 중인 객체 간의 유사도 계산
-            if trk_embs.size > 0 and dets.size > 0:
+            
+            if trk_embs.size > 0 and dets.size >0:
                 # L2 정규화: 각 벡터를 단위 벡터로 변환
                 dets_embs_norm = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)  # [N, D]
                 trk_embs_norm = trk_embs / np.linalg.norm(trk_embs, axis=1, keepdims=True)    # [M, D]
@@ -231,6 +237,7 @@ class BoostTrack(object):
                 # 코사인 유사도 계산: dot(A, B.T) / (||A|| * ||B||)
                 # 정규화된 벡터이므로 분모는 1이 되어 내적만으로 코사인 유사도 계산 가능
                 # emb_cost shape: [N, M] - N개 검출과 M개 트래커 간의 모든 쌍에 대한 유사도
+                print("dets_embs shape:", dets_embs.shape, "trk_embs shape:", trk_embs.shape)
                 emb_cost = np.dot(dets_embs_norm, trk_embs_norm.T)  # 값의 범위: [-1, 1]
                 
         emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
