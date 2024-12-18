@@ -53,8 +53,10 @@ rgb_stats = torch.cat([rgb_mean, rgb_std], dim=1)      # [1, 6] 형태로 결합
 with torch.no_grad():
     # 이미지와 RGB 통계로 유사도 계산
     similarity = model(input_dummy, rgb_stats)
-    print("Image-RGB Similarity:", similarity)
     print("Similarity Shape:", similarity.shape)
+
+
+print(model)
 
 
 # # Base 모델 입력 크기

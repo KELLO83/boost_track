@@ -179,7 +179,7 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        from tracker.CLIP.model.clip.model import CLIP, build_model
+        from tracker.CLIP.model.clip.model import CLIP
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
         
