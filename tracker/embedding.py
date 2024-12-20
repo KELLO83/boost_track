@@ -1,4 +1,3 @@
-from ast import mod
 from collections import OrderedDict
 from pathlib import Path
 import os
@@ -9,16 +8,13 @@ import cv2
 import torchvision
 import numpy as np
 import torchvision.transforms as T
-import torch.nn.functional as F
-import math
-from torchvision import transforms
-import cv2
 #from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
-#from .TransReID_SSL.transreid_pytorch.model.backbones.Microsoft_swinv2_trasformer import SwinTransformerV2 as MS_Swin_Transformer_V2
-from .ConvNeXt.models.convnext import ConvNeXt
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
+import torch.nn.functional as F
 import torchinfo
+import math
+import torch
 
 
 class EmbeddingComputer:
@@ -35,7 +31,7 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-        elif config.Model_Name == 'Clip' or config.Model_Name == 'CLIP_RGB':
+        elif config.Model_Name == 'CLIP':
             self.crop_size = (224,240)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -43,16 +39,16 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-        
-        elif config.Model_Name == 'La_Transformer':
-            self.crop_size = (224, 224)
+            
+        elif config.Model_Name == 'swinv2':
+            self.crop_size = (192 , 192)
             self.transform = T.Compose([
                 T.ToPILImage(),
                 T.Resize(self.crop_size),
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-
+            
         else:
             self.crop_size = (384, 384)
             self.transform = T.Compose([
@@ -72,87 +68,85 @@ class EmbeddingComputer:
         self.cache = {}
         self.cache_name = ""
         
-    def compute_embedding(self, img, boxes, tag=''):
-        """
-        이미지와 박스들에 대한 임베딩을 계산합니다.
-        """
-        embeddings = []
-        batch_bbox = []
-        batch_img = []
-        
-        # 배치 처리를 위한 데이터 준비
-        for box in boxes:
-            x1, y1, x2, y2 = map(int, box)
-            box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
+    def compute_embedding(self, img, bbox, tag):
+        """이미지에서 검출된 객체의 임베딩을 계산합니다."""
+        if self.model is None:
+            raise RuntimeError("Model is not initialized.")
             
-            # 이미 캐시된 경우 재사용
-            if box_key in self.cache:
-                embeddings.append(self.cache[box_key])
+        if len(bbox) == 0:
+            return np.array([])
+            
+        # 캐시 확인
+        if tag != self.cache_name:
+            self.cache = {}
+            self.cache_name = tag
+            
+        # 배치 처리를 위한 준비
+        batch_size = min(self.max_batch, len(bbox))
+        n_batches = math.ceil(len(bbox) / batch_size)
+        batch_image = []
+        embeddings = []
+        
+        for i in range(n_batches):
+            start_idx = i * batch_size
+            end_idx = min((i + 1) * batch_size, len(bbox))
+            batch_bbox = bbox[start_idx:end_idx]
+            
+            # 배치 내의 각 객체에 대한 임베딩 계산
+            batch_tensors = []
+            for box in batch_bbox:
+                x1, y1, x2, y2 = map(int, box)
+                box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
+                
+                if box_key in self.cache:
+                    embedding = self.cache[box_key]
+                else:
+                    # 이미지 크롭 및 전처리
+                    cropped = img[y1:y2, x1:x2]
+                    batch_image.append(cropped) # CLIP_RGB 에서 이미지의 rgb분포도를 사용하기위하여
+                    if cropped.size == 0:
+                        continue
+                        
+                    tensor = self.transform(cropped)
+                    batch_tensors.append(tensor)
+                    
+            if not batch_tensors:
                 continue
                 
-            # 캐시되지 않은 경우 배치에 추가
-            batch_bbox.append(box)
-            cropped = img[y1:y2, x1:x2]
-            batch_img.append(cropped)
-        
-        # 배치가 비어있으면 조기 반환
-        if not batch_img:
-            return np.array(embeddings) if embeddings else np.array([])
-        
-        # 이미지 전처리
-        if self.model_type == 'CLIP_RGB':
-            preprocessed = self.preprocess_with_rgb_stats(batch_img)
-            batch_input, rgb_stats_batch = preprocessed
+            # 배치 텐서 생성 및 GPU로 이동
+            batch_input = torch.stack(batch_tensors)
+            batch_input = batch_input.to(self.device, non_blocking=True)  # non_blocking=True로 설정하여 성능 향상
             
-        else:
-            batch_input = self.preprocess(batch_img)
-        
-        # 임베딩 계산
-        with torch.no_grad():
-            if self.model_type == 'La_Transformer':
-                batch_embeddings = self.model(batch_input)  # [1, 14, 768]
-                batch_embeddings = batch_embeddings.squeeze(0)  # [14, 768]
-                batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
+            # 임베딩 계산
+            with torch.no_grad():
                 
-                # 14개의 part features를 평균하여 하나의 벡터로 만듦
-                batch_embeddings = torch.mean(batch_embeddings, dim=0, keepdim=True)  # [1, 768]
-                batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
-                batch_embeddings = batch_embeddings.cpu().numpy()  # [1, 768]
-                
-                # LA-Transformer는 전체 특징맵을 하나의 임베딩으로 저장
-                for box in batch_bbox:
-                    x1, y1, x2, y2 = map(int, box)
-                    box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
-                    if box_key not in self.cache:
-                        self.cache[box_key] = batch_embeddings.squeeze(0)  # [768]
-                        embeddings.append(batch_embeddings.squeeze(0))
-                
-                return np.array(embeddings) if embeddings else np.array([])  # [num_dets, 768]
-            
-            else:
-                # 다른 모델들의 처리 (CLIP, CLIP_RGB 등)
                 if self.model_type == 'CLIP_RGB':
-                    batch_embeddings = self.model(batch_input, rgb_stats=rgb_stats_batch)
-                elif self.model_type == 'CLIP':
-                    image_features = self.model.encode_image(batch_input)
-                    batch_embeddings = image_features[-1]
-                else:
-                    batch_embeddings = self.model(batch_input)
+                    preprocessed = self.preprocess_with_rgb_stats(batch_img)
+                    batch_input, rgb_stats_batch = preprocessed 
+                    batch_embeddings = self.model(batch_input , rgb_stats_batch) # [1,211,768]
+                    
+                if self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론
+                    image_features = self.model.encode_image(batch_input) # CLIP 는 3가지 특징맵을 반환함
+                    batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 211, 768]
+                    batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
                 
-                batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
-                batch_embeddings = batch_embeddings.cpu().numpy()
+                else: # SWINV2 , CONVNEXT
+                    batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048]
                 
-                # 기존 방식의 캐시 저장
-                current_idx = 0
-                for box in batch_bbox:
-                    if current_idx >= len(batch_embeddings):
-                        break
+        
+            print("batch_embeddings : ", batch_embeddings.shape)
+            
+            # GPU에서 정규화 수행 후 CPU로 이동
+            batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
+            batch_embeddings = batch_embeddings.cpu().numpy()
+            
+            
+            for j, box in enumerate(batch_bbox):
+                if j < len(batch_embeddings):
                     x1, y1, x2, y2 = map(int, box)
                     box_key = f"{tag}_{x1}_{y1}_{x2}_{y2}"
-                    if box_key not in self.cache:
-                        self.cache[box_key] = batch_embeddings[current_idx]
-                        embeddings.append(batch_embeddings[current_idx])
-                        current_idx += 1
+                    self.cache[box_key] = batch_embeddings[j]
+                    embeddings.append(batch_embeddings[j])
         
         return np.array(embeddings) if embeddings else np.array([])
 
@@ -191,106 +185,10 @@ class EmbeddingComputer:
         return sorted_distances, indices
 
     def initialize_model(self):
-        from tracker.CLIP.model.clip.model import CLIP
+        from tracker.CLIP.model.clip.model import CLIP 
+               
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
-        
-        if self.model_type == 'La_Transformer':
-            from tracker.LA_Transformer.LATransformer.model import LATransformer
-            from timm import create_model
-            
-            # 1. 기본 ViT 모델 생성
-            base_model = create_model(
-                'vit_base_patch16_224',
-                pretrained=False,
-                num_classes=0  # 분류 헤드 제거
-            )
-            
-            # 2. LA-Transformer 초기화
-            model = LATransformer(
-                model=base_model,
-                lmbd=4
-            )
-            
-            # 3. 사전 학습된 가중치 로드
-            state_dict = torch.load(weight_path, map_location='cpu')
-            
-            # classifier 관련 키 제거
-            filtered_state_dict = {k: v for k, v in state_dict.items() 
-                                if not k.startswith('classifier') and 
-                                    not k.startswith('model.head')}
-            
-            # 필터링된 가중치만 로드
-            model.load_state_dict(filtered_state_dict, strict=False)
-            
-            # classifier 속성 제거
-            for i in range(14):  # 14개의 classifier 제거
-                if hasattr(model, f'classifier{i}'):
-                    delattr(model, f'classifier{i}')
-            
-            
-            self.model = model.eval()  # 평가 모드로 설정
-            self.model.to("cuda")
-            print(model)
-            print("La Transformer Model Initialized (Feature Extractor Only)")
-            
-            return
-        
-        if self.model_type == 'CLIP_RGB':
-            from  tracker.CLIP.model.clip.model import RGBEncodedCLIP
-            embed_dim = 768                  
-            image_resolution = 232          # 14.5x16≈232
-            h_resolution = 14              # 패치 개수로 직접 지정
-            w_resolution = 15              # 패치 개수로 직접 지정 (14x15=210)
-            vision_layers = 12             
-            vision_width = 768             # Base 모델 width
-            vision_patch_size = 16         
-            vision_stride_size = 16        
-            context_length = 77            
-            vocab_size = 49408            
-            transformer_width = 512        
-            transformer_heads = 8          
-            transformer_layers = 12        
-        
-            model = RGBEncodedCLIP(
-                embed_dim=embed_dim,
-                image_resolution=image_resolution,
-                vision_layers=vision_layers,
-                vision_width=vision_width,
-                vision_patch_size=vision_patch_size,
-                vision_stride_size=vision_stride_size,
-                context_length=context_length,
-                vocab_size=vocab_size,
-                transformer_width=transformer_width,
-                transformer_heads=transformer_heads,
-                transformer_layers=transformer_layers,
-                h_resolution=h_resolution,
-                w_resolution=w_resolution
-            )
-            
-            
-                        # 샘플 입력 생성
-            input_dummy = torch.randn(1, 3, 224, 240).to(self.device)  # 이미지 입력
-
-            # RGB 통계 샘플 생성 (mean과 std 각각 3차원)
-            rgb_mean = torch.tensor([[0.5, 0.4, 0.3]]).to(self.device)  # 예시 RGB 평균값
-            rgb_std = torch.tensor([[0.2, 0.2, 0.2]]).to(self.device)   # 예시 RGB 표준편차
-            rgb_stats = torch.cat([rgb_mean, rgb_std], dim=1)      # [1, 6] 형태로 결합
-            
-            
-            model = model.to(self.device)
-            model.load_state_dict(torch.load(weight_path) , strict = False)
-            
-            
-            with torch.no_grad():
-                # 이미지와 RGB 통계로 유사도 계산
-                similarity = model(input_dummy, rgb_stats)
-                print("Image-RGB Similarity:", similarity)
-                print("Similarity Shape:", similarity.shape)
-
-            self.model = model
-            return
-        
         if self.model_type == 'CLIP':
             # CLIP_Reid Base
             embed_dim = 768                  
@@ -333,6 +231,8 @@ class EmbeddingComputer:
         
         
         if self.model_type == 'convNext':
+
+            from .ConvNeXt.models.convnext import ConvNeXt
             config_model ={
                 'xlarge':{
                     'depths':[3, 3, 27, 3],
@@ -406,6 +306,7 @@ class EmbeddingComputer:
             return
         
         if self.model_type == 'swinv2':
+            from .MS_Swin_Transformer.models.swin_transformer_v2 import SwinTransformerV2 as MS_Swin_Transformer_V2
             print("Swin Transformer V2 model loading...")
             
             # Swin Transformer V2 설정값
@@ -430,15 +331,24 @@ class EmbeddingComputer:
 
             self.model = MS_Swin_Transformer_V2(**init_args)
             
-            self.model.to(self.device)
-
-            if hasattr(self.model, 'head'): # MLP 제거 특징맵 사용
-                self.model.head = torch.nn.Identity()
+            # 모델을 GPU로 이동
+            self.model = self.model.to(self.device)
+            
+            # head를 Identity로 변경하고 GPU로 이동
+            if hasattr(self.model, 'head'):
+                self.model.head = torch.nn.Identity().to(self.device)
+            
+            # 모델의 모든 파라미터가 GPU로 이동했는지 확인
+            for param in self.model.parameters():
+                if param.device != self.device:
+                    print(f"Warning: Parameter found on {param.device}, moving to {self.device}")
+                    param.data = param.data.to(self.device)
             
             print(f"Model initialized on {self.device}")
+            print(f"Model parameters device check: {next(self.model.parameters()).device}")
             
             self.model.eval()
-            
+        
         else:
             print("TransReID ViT model loading...")
             self.model = VIT_EXTEND(
@@ -473,46 +383,7 @@ class EmbeddingComputer:
         self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
         self.model.eval()
 
-    def preprocess(self, batch_img):
-        """
-        이미지 배치를 전처리합니다.
-        """
-        if self.model_type == 'La_Transformer':
-            transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-            ])
-        else:
-            transform = transforms.Compose([
-                transforms.ToPILImage(),
-                transforms.Resize((224, 224)),
-                transforms.ToTensor(),
-                transforms.Normalize((0.48145466, 0.4578275, 0.40821073), 
-                                   (0.26862954, 0.26130258, 0.27577711))
-            ])
 
-        processed = []
-        for img in batch_img:
-            if img.size == 0:
-                continue
-            # Convert to RGB if necessary
-            if len(img.shape) == 2:
-                img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
-            elif img.shape[2] == 4:
-                img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGB)
-            elif img.shape[2] == 3:
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
-            processed_tensor = transform(img)
-            processed.append(processed_tensor)
-            
-        if not processed:
-            return None
-            
-        batch_tensor = torch.stack(processed)
-        return batch_tensor.to(self.device)
 
     def preprocess_with_rgb_stats(self, batch_img):
         """
