@@ -48,7 +48,6 @@ def main():
                         - swinv2 : Swin-B
                         - CLIP : CLIP_base # Image Forward
                         - CLIP_RGB : CLIP + RGB AVERAGE DIVIATION
-                        
                         """)
     
     parser.add_argument("--reid_model", type=str, 
