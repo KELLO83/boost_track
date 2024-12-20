@@ -49,6 +49,15 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
             
+        elif config.Model_Name == 'La_Transformer':
+            self.crop_size = (224, 224)
+            self.transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize((224, 224)),  # LA Transformer requires 224x224 input
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
+            ])
+            
         else:
             self.crop_size = (384, 384)
             self.transform = T.Compose([
@@ -130,8 +139,13 @@ class EmbeddingComputer:
                     batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 211, 768]
                     batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
                 
+                elif self.model_type == 'La_Transformer':
+                    batch_embeddings = self.model(batch_input)  # [1, 14, 768]
+                    # 모든 부분 특징의 평균을 계산하여 하나의 특징 벡터로 만듦
+                    batch_embeddings = torch.mean(batch_embeddings, dim=1)  # [1, 768] # 2차원으로 반영
+                
                 else: # SWINV2 , CONVNEXT
-                    batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048]
+                    batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048] La Transformer [1, 14, 768]
                 
         
             print("batch_embeddings : ", batch_embeddings.shape)
@@ -189,6 +203,44 @@ class EmbeddingComputer:
                
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
+        
+        if self.model_type == 'La_Transformer':
+            import timm
+            from tracker.LA_Transformer.LATransformer.model import LATransformer
+            
+            # Load base ViT model from timm
+            base_model = timm.create_model(
+                'vit_base_patch16_224',
+                pretrained=True,
+                num_classes=751  # Set to match the original model's class number
+            )
+            
+            # Initialize LA Transformer with the base model
+            model = LATransformer(base_model, lmbd=0.2)
+            
+            # Load pretrained weights
+            state_dict = torch.load(weight_path, map_location=self.device)
+            
+            # Filter out unexpected keys
+            model_dict = model.state_dict()
+            filtered_state_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+            missing_keys = [k for k in model_dict.keys() if k not in filtered_state_dict]
+            unexpected_keys = [k for k in state_dict.keys() if k not in model_dict]
+            
+            if unexpected_keys:
+                print("Unexpected keys in state_dict:", unexpected_keys)
+            if missing_keys:
+                print("Missing keys in state_dict:", missing_keys)
+            
+            # Load filtered weights
+            model.load_state_dict(filtered_state_dict, strict=False)
+            
+            model.to(self.device)
+            self.model = model
+            print(model)
+            print("LA Transformer model loaded successfully")
+            return
+        
         if self.model_type == 'CLIP':
             # CLIP_Reid Base
             embed_dim = 768                  
