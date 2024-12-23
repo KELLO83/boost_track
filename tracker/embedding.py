@@ -15,6 +15,7 @@ import torch.nn.functional as F
 import torchinfo
 import math
 import torch
+import torch.nn as nn
 
 
 class EmbeddingComputer:
@@ -49,14 +50,23 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
             
-        elif config.Model_Name == 'La_Transformer':
+        elif config.Model_Name == 'La_Transformer' or config.Model_Name == 'CTL':
             self.crop_size = (224, 224)
             self.transform = T.Compose([
                 T.ToPILImage(),
-                T.Resize((224, 224)),  # LA Transformer requires 224x224 input
+                T.Resize(self.crop_size),  # LA Transformer requires 224x224 input
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
             ])
+            
+        # elif config.Model_Name == 'CTL':
+        #     self.crop_size = (224, 224)
+        #     self.transform = T.Compose([
+        #         T.ToPILImage(),
+        #         T.Resize(self.crop_size),
+        #         T.ToTensor(),
+        #         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+        #     ])
             
         else:
             self.crop_size = (384, 384)
@@ -144,6 +154,11 @@ class EmbeddingComputer:
                     # 모든 부분 특징의 평균을 계산하여 하나의 특징 벡터로 만듦
                     batch_embeddings = torch.mean(batch_embeddings, dim=1)  # [1, 768] # 2차원으로 반영
                 
+                elif self.model_type == 'CTL':
+                    batch_embeddings = self.model(batch_input)  # [1, 2048, 14, 14]
+                    # Global average pooling으로 공간 차원 제거
+                    batch_embeddings = torch.mean(batch_embeddings, dim=[2, 3])  # [1, 2048]
+                
                 else: # SWINV2 , CONVNEXT
                     batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048] La Transformer [1, 14, 768]
                 
@@ -203,6 +218,45 @@ class EmbeddingComputer:
                
         print("Model type : ", self.model_type)
         weight_path = self.config.reid_model_path
+        
+        print("Weight path : ", weight_path)
+        if self.model_type == 'CTL':
+            import os
+            if not os.path.exists(weight_path):
+                print(f"Warning: Weight file not found at {weight_path}")
+                print("Continuing with pretrained weights only...")
+            
+            from tracker.centroids_reid.modelling.backbones.resnet_ibn_a import resnet50_ibn_a
+            model = resnet50_ibn_a(last_stride=1, pretrained=True)
+            
+            # Remove FC layer and modify avgpool
+            model.avgpool = nn.Identity()  # 공간 정보 유지
+            model.fc = nn.Identity()
+            
+            if os.path.exists(weight_path):
+                try:
+                    state_dict = torch.load(weight_path, map_location=self.device)
+                    if isinstance(state_dict, dict) and 'state_dict' in state_dict:
+                        state_dict = state_dict['state_dict']
+                    state_dict = {k: v for k, v in state_dict.items() if not k.startswith('fc.')}
+                    model.load_state_dict(state_dict, strict=False)
+                except Exception as e:
+                    print(f"Error loading weights: {e}")
+                    print("Continuing with pretrained weights only...")
+            
+            model.to(self.device)
+            self.model = model
+            
+            # Test forward pass
+            input_dummy = torch.randn(1, 3, 224, 224).to(self.device)
+            out = model(input_dummy)
+            print("Raw output shape:", out.shape)
+            
+            # Global average pooling to get final shape
+            out = torch.mean(out, dim=[2, 3])  # [1, 2048, 14, 14] -> [1, 2048]
+            print("Final output shape:", out.shape)
+            
+            return
         
         if self.model_type == 'La_Transformer':
             import timm

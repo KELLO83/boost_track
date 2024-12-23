@@ -14,6 +14,19 @@ from collections import deque
 import os
 id = {}
 
+
+
+
+
+MODEL_WEIGHTS = {
+    'swinv2': 'Micrsorft_swinv2_large_patch4_window12_192_22k.pth',
+    'convNext': 'convnext_xlarge_22k_1k_384_ema.pth',
+    'CLIP': 'CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth',
+    'CLIP_RGB': 'CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth',
+    'La_Transformer': 'LaTransformer.pth',
+    'CTL': 'CTL.pth'
+}
+
 def get_id_color(id):
     color = [random.randint(150, 255) for _ in range(3)]
     return color
@@ -38,31 +51,28 @@ def main():
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--visualize", action="store_true", default=True)
-    parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer'],
-                        default='La_Transformer',
+    parser.add_argument("--img_path", type=str, default="plane/cam0")
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL'],
+                        default='CTL',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
                         - dinov2 : Dinov2-B
                         - swinv2 : Swin-B
-                        - CLIP : CLIP_base # Image Forward
+                        - CLIP : CLIP + RGB AVERAGE DIVIATION
                         - CLIP_RGB : CLIP + RGB AVERAGE DIVIATION
                         --La_Transformer
+                        --CTL
                         """)
     
-    parser.add_argument("--reid_model", type=str, 
-                        default='LaTransformer.pth')
-    
-    """
-    
-    swin v2 = Micrsorft_swinv2_large_patch4_window12_192_22k
-    convnext = convnext_xlarge_22k_1k_384_ema
-    CLIP = CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth
-    La = LaTransformer.pth
-    """
-    
+    parser.add_argument("--reid_model", type=str, default=None)
+
+
     args = parser.parse_args()
+
+    if args.reid_model is None:
+        args.reid_model = MODEL_WEIGHTS[args.model_name]
+        print("Weights : ",args.reid_model)
 
     # 설정
     GeneralSettings.values['use_embedding'] = True
@@ -99,7 +109,10 @@ def main():
     img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
     
     
-    stop_frame_ids = [145, 573 , 600 , 650 , 673]
+    # stop_frame_ids = [145, 573 , 600 , 650 , 673]
+    # stop_frame_ids = [i for i in range(10, len(img_list), 10)]
+    stop_frame_ids = [142,198,562,648,656,680]
+    # print(stop_frame_ids)
     for idx , img_name in enumerate(tqdm(img_list)):
         frame_id = int(os.path.splitext(img_name)[0])
         img_path = os.path.join(args.img_path, img_name)
