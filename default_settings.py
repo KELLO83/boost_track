@@ -85,8 +85,8 @@ class BoostTrackConfig:
                  use_reid: bool = True,
                  use_cmc: bool = True,
                  dataset: str = 'mot17',
-                 min_box_area: int = 4000,
-                 aspect_ratio_thresh: float = 1.6,
+                 min_box_area: int = 5000,
+                 aspect_ratio_thresh: float = 1.4,
                  lambda_iou: float = 0.5,
                  lambda_mhd: float = 0.25,
                  lambda_shape: float = 0.25,
@@ -98,16 +98,21 @@ class BoostTrackConfig:
                  use_sb: bool = True,
                  use_vt: bool = True,
                  local_feature : bool = False,
-                 model_name : str = 'dinov2',
+                 feature_avg : bool = False,
+                 model_name : str = '',
                  ):
         
-        self.Model_Name = model_name
+        
+        self.model_name = model_name
+        
+        self.feature_avg = feature_avg # 임베딩 벡터 평균사용? 및 최근 벡터 사용?
         
         self.local_feature = local_feature
         
         if not os.path.exists(reid_model_path):
             raise Exception(f"Invalid reid_model_path: {reid_model_path}")
         self.reid_model_path = reid_model_path
+        
         self.device = device
         self.max_age = max_age
         self.min_hits = min_hits

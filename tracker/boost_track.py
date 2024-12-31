@@ -9,13 +9,14 @@ from typing import Optional, List
 
 import cv2
 import numpy as np
+from ultralytics import cfg
 
 from default_settings import GeneralSettings, BoostTrackSettings, BoostTrackPlusPlusSettings, BoostTrackConfig
 from tracker.embedding import EmbeddingComputer
 from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch
 from tracker.ecc import ECC
 from tracker.kalmanfilter import KalmanFilter
-
+from .embedding_history import EmbeddingHistory, MeanEmbeddingHistory
 
 def convert_bbox_to_z(bbox):
     """
@@ -164,6 +165,10 @@ class BoostTrack(object):
         else:
             self.ecc = None
 
+        # 임베딩 히스토리 초기화
+        self.embedding_history = EmbeddingHistory()
+        self.mean_embedding_history = MeanEmbeddingHistory()
+        
     def update(self, dets, img_tensor, img_numpy, tag):
         """
         Params:
@@ -171,7 +176,11 @@ class BoostTrack(object):
         Requires: this method must be called once for each frame even with empty detections (use np.empty((0, 5)) for frames without detections).
         Returns the a similar array, where the last column is the object ID.
         NOTE: The number of objects returned may differ from the number of detections provided.
+        
+        dets 형태 [x1,y1,x2,y2,score]   process_yolo_detection dets.append([x1, y1, x2, y2, conf])
+                
         """
+    
         if dets is None:
             return np.empty((0, 5))
         if not isinstance(dets, np.ndarray):
@@ -183,8 +192,8 @@ class BoostTrack(object):
         dets = deepcopy(dets)
         dets[:, :4] /= scale
 
-        if self.ecc is not None:
-            transform = self.ecc(img_numpy, self.frame_count, tag)
+        if self.ecc is not None: # Enhanced Correlation Coefficient (ECC) 연속된 프레임간의 카메라 움직임을 추정하는 알고리즘
+            transform = self.ecc(img_numpy, self.frame_count, tag) # 현재 프레임과 이전프레임 사이에 변환행렬 계산
             for trk in self.trackers:
                 trk.camera_update(transform)
 
@@ -202,37 +211,34 @@ class BoostTrack(object):
         if self.use_duo_boost:
             dets = self.duo_confidence_boost(dets)
 
-        remain_inds = dets[:, 4] >= self.det_thresh
-        dets = dets[remain_inds]
-        scores = dets[:, 4]
+        remain_inds = dets[:, 4] >= self.det_thresh # dets shape: [N, 5] 객체된객체수 , 객체수마다 가지고있는 x1,y1,x2,y2,score
+        # 임계치 미만일때 탈락 실행
+        dets = dets[remain_inds] # 임계치보다 큰 인덱스값들 추출
+        scores = dets[:, 4] # 신뢰도추출 > 임계치 
 
         # 임베딩 기반 객체 유사도 계산
         emb_cost = None  
         if self.embedder and dets.size > 0:
             # 현재 프레임의 모든 검출 객체에 대한 임베딩 계산
             # dets_embs shape: [N, D] where N=검출 객체 수, D=768(임베딩 차원)
-            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag) # 방금 새로 검출한 객체에대한 임베딩값
+            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
             
             if dets_embs.size == 0:  # 임베딩 계산 실패 시
                 raise RuntimeError("Embedding computation failed.")
             
-            # 현재 추적 중인 모든 객체의 임베딩 수집
-            trk_embs = []
+            # 트래커의 임베딩 히스토리 업데이트
             for t in range(len(self.trackers)):
-                trk_embs.append(self.trackers[t].get_emb())
-            trk_embs = np.array(trk_embs)  # shape: [M, D] where M=트래커 수, D=768
+                self.embedding_history.update_embedding(t, self.trackers[t].get_emb())
             
-            # 검출된 객체와 추적 중인 객체 간의 유사도 계산
-            if trk_embs.size > 0 and dets.size > 0:
-                # L2 정규화: 각 벡터를 단위 벡터로 변환
-                dets_embs_norm = dets_embs / np.linalg.norm(dets_embs, axis=1, keepdims=True)  # [N, D]
-                trk_embs_norm = trk_embs / np.linalg.norm(trk_embs, axis=1, keepdims=True)    # [M, D]
-                
-                # 코사인 유사도 계산: dot(A, B.T) / (||A|| * ||B||)
-                # 정규화된 벡터이므로 분모는 1이 되어 내적만으로 코사인 유사도 계산 가능
-                # emb_cost shape: [N, M] - N개 검출과 M개 트래커 간의 모든 쌍에 대한 유사도
-                emb_cost = np.dot(dets_embs_norm, trk_embs_norm.T)  # 값의 범위: [-1, 1]
-                
+            
+            if len(self.trackers) > 0 and dets.size > 0:
+                #print("누적 평균벡터 사용")
+                emb_cost = self.mean_embedding_history.compute_batch_similarity(dets_embs, self.trackers)
+                # else:
+                #     emb_cost = self.embedding_history.compute_batch_similarity(dets_embs, self.trackers)
+
+                    
+    
         emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
 
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(

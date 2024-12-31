@@ -1,3 +1,4 @@
+from ast import Import
 from collections import OrderedDict
 from pathlib import Path
 import os
@@ -17,14 +18,16 @@ import math
 import torch
 import torch.nn as nn
 
+from tracker.CLIP.model.clip.model import RGBEncodedCLIP
+
 
 class EmbeddingComputer:
     def __init__(self, config):
         self.model = None
         self.config = config
-        self.model_type = config.Model_Name
+        self.model_type = config.model_name
         
-        if config.Model_Name == 'dinov2':
+        if config.model_name == 'dinov2':
             self.crop_size = (448, 448)  # 14의 배수인 448x448 사용 (14*32)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -32,8 +35,8 @@ class EmbeddingComputer:
                 T.ToTensor(),
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
-        elif config.Model_Name == 'CLIP':
-            self.crop_size = (224,240)
+        elif config.model_name == 'CLIP' or config.model_name == 'CLIP_RGB':
+            self.crop_size = (224, 224)  # 16의 배수로 맞춤 (14x14 패치 + 1 cls token = 197)
             self.transform = T.Compose([
                 T.ToPILImage(),
                 T.Resize(self.crop_size),
@@ -41,7 +44,7 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
             
-        elif config.Model_Name == 'swinv2':
+        elif config.model_name == 'swinv2':
             self.crop_size = (192 , 192)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -50,7 +53,7 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
             ])
             
-        elif config.Model_Name == 'La_Transformer' or config.Model_Name == 'CTL':
+        elif config.model_name == 'La_Transformer' or config.model_name == 'CTL':
             self.crop_size = (224, 224)
             self.transform = T.Compose([
                 T.ToPILImage(),
@@ -59,14 +62,6 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
             ])
             
-        # elif config.Model_Name == 'CTL':
-        #     self.crop_size = (224, 224)
-        #     self.transform = T.Compose([
-        #         T.ToPILImage(),
-        #         T.Resize(self.crop_size),
-        #         T.ToTensor(),
-        #         T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
-        #     ])
             
         else:
             self.crop_size = (384, 384)
@@ -140,11 +135,12 @@ class EmbeddingComputer:
             with torch.no_grad():
                 
                 if self.model_type == 'CLIP_RGB':
-                    preprocessed = self.preprocess_with_rgb_stats(batch_img)
+                    preprocessed = self.preprocess_with_rgb_stats(batch_image)
                     batch_input, rgb_stats_batch = preprocessed 
-                    batch_embeddings = self.model(batch_input , rgb_stats_batch) # [1,211,768]
+                    # forward에서 이미 정규화된 결합 특징을 반환
+                    batch_embeddings = self.model(batch_input, rgb_stats_batch)
                     
-                if self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론
+                elif self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론
                     image_features = self.model.encode_image(batch_input) # CLIP 는 3가지 특징맵을 반환함
                     batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 211, 768]
                     batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
@@ -159,16 +155,12 @@ class EmbeddingComputer:
                     # Global average pooling으로 공간 차원 제거
                     batch_embeddings = torch.mean(batch_embeddings, dim=[2, 3])  # [1, 2048]
                 
-                else: # SWINV2 , CONVNEXT
+                elif self.model_type == 'swinv2' or self.model_type == 'convNext': # SWINV2 , CONVNEXT
                     batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048] La Transformer [1, 14, 768]
-                
         
-            print("batch_embeddings : ", batch_embeddings.shape)
-            
             # GPU에서 정규화 수행 후 CPU로 이동
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
             batch_embeddings = batch_embeddings.cpu().numpy()
-            
             
             for j, box in enumerate(batch_bbox):
                 if j < len(batch_embeddings):
@@ -295,22 +287,60 @@ class EmbeddingComputer:
             print("LA Transformer model loaded successfully")
             return
         
-        if self.model_type == 'CLIP':
-            # CLIP_Reid Base
+        if self.model_type == 'CLIP_RGB':
+            # CLIP_RGB Base (사전 훈련된 가중치와 호환되는 설정 사용)
+            from tracker.CLIP.model.clip.model import RGBEncodedCLIP
             embed_dim = 768                  
-            image_resolution = 232          # 14.5x16≈232
-            h_resolution = 14              # 패치 개수로 직접 지정
-            w_resolution = 15              # 패치 개수로 직접 지정 (14x15=210)
+            image_resolution = 224          # 입력 이미지 크기
+            h_resolution = 14              # 224/16 = 14 (패치 개수)
+            w_resolution = 14              # 224/16 = 14 (패치 개수)
             vision_layers = 12             
-            vision_width = 768             # Base 모델 width
+            vision_width = 768             
+            vision_patch_size = 16         
+            vision_stride_size = 16        
+            context_length = 77            # 사전 훈련된 모델의 context_length 유지
+            vocab_size = 49408            # 사전 훈련된 모델의 vocab_size 유지
+            transformer_width = 512        # 사전 훈련된 모델의 transformer_width 유지
+            transformer_heads = 8          
+            transformer_layers = 12        
+            
+            model = RGBEncodedCLIP(
+                embed_dim=embed_dim,
+                image_resolution=image_resolution,
+                h_resolution=h_resolution,
+                w_resolution=w_resolution,
+                vision_layers=vision_layers,
+                vision_width=vision_width,
+                vision_patch_size=vision_patch_size,
+                vision_stride_size=vision_stride_size,
+                context_length=context_length,
+                vocab_size=vocab_size,
+                transformer_width=transformer_width,
+                transformer_heads=transformer_heads,
+                transformer_layers=transformer_layers,
+            )
+
+            model.load_state_dict(torch.load(weight_path), strict=False)
+            model.to(self.device)
+            self.model = model
+        
+            return
+        
+        if self.model_type == 'CLIP':
+            # CLIP Base (ViT-B/16)
+            embed_dim = 512                  # 사전 훈련된 모델과 맞춤
+            image_resolution = 224          
+            vision_layers = 12             
+            vision_width = 768              
             vision_patch_size = 16         
             vision_stride_size = 16        
             context_length = 77            
             vocab_size = 49408            
-            transformer_width = 512        
-            transformer_heads = 8          
-            transformer_layers = 12        
-        
+            transformer_width = 512         
+            transformer_heads = 8           
+            transformer_layers = 12    
+            h_resolution = 14              # 224/16 = 14 (패치 개수)
+            w_resolution = 14              # 224/16 = 14 (패치 개수)
         
         
             model = CLIP(
