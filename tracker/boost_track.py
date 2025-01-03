@@ -16,7 +16,7 @@ from tracker.embedding import EmbeddingComputer
 from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch
 from tracker.ecc import ECC
 from tracker.kalmanfilter import KalmanFilter
-from .embedding_history import EmbeddingHistory, MeanEmbeddingHistory
+from .embedding_history import EmbeddingHistory, MeanEmbeddingHistory, TemplateEmbeddingHistory
 
 def convert_bbox_to_z(bbox):
     """
@@ -132,6 +132,9 @@ class BoostTrack(object):
         if cfg is None:
             cfg = BoostTrackConfig.get_default_config()
             
+        # ID 카운터 초기화
+        KalmanBoxTracker.count = 0
+            
         self.frame_count = 0
         self.trackers = []
         
@@ -168,6 +171,7 @@ class BoostTrack(object):
         # 임베딩 히스토리 초기화
         self.embedding_history = EmbeddingHistory()
         self.mean_embedding_history = MeanEmbeddingHistory()
+        self.template_history = TemplateEmbeddingHistory()  # 추가
         
     def update(self, dets, img_tensor, img_numpy, tag):
         """
@@ -211,9 +215,8 @@ class BoostTrack(object):
         if self.use_duo_boost:
             dets = self.duo_confidence_boost(dets)
 
-        remain_inds = dets[:, 4] >= self.det_thresh # dets shape: [N, 5] 객체된객체수 , 객체수마다 가지고있는 x1,y1,x2,y2,score
-        # 임계치 미만일때 탈락 실행
-        dets = dets[remain_inds] # 임계치보다 큰 인덱스값들 추출
+        remain_inds = dets[:, 4] >= self.det_thresh # dets shape: [N, 5] 객체된객체수 , 객체수마다 가지고있는 x1,y1,x2,y2,score        
+        dets = dets[remain_inds] # 새로운 ID를 부여받지도 않고, 트래킹 대상으로도 고려되지 않습니다. 임계치미만의 객체들은
         scores = dets[:, 4] # 신뢰도추출 > 임계치 
 
         # 임베딩 기반 객체 유사도 계산
@@ -228,15 +231,12 @@ class BoostTrack(object):
             
             # 트래커의 임베딩 히스토리 업데이트
             for t in range(len(self.trackers)):
-                self.embedding_history.update_embedding(t, self.trackers[t].get_emb())
-            
-            
+                tracker = self.trackers[t]
+                self.embedding_history.update_embedding(tracker.id, tracker.get_emb())
+                self.mean_embedding_history.update_embedding(tracker.id, tracker.get_emb())
+                
             if len(self.trackers) > 0 and dets.size > 0:
-                #print("누적 평균벡터 사용")
                 emb_cost = self.mean_embedding_history.compute_batch_similarity(dets_embs, self.trackers)
-                # else:
-                #     emb_cost = self.embedding_history.compute_batch_similarity(dets_embs, self.trackers)
-
                     
     
         emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
@@ -244,7 +244,7 @@ class BoostTrack(object):
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
             trks,
-            self.iou_threshold, # 객체 re-id에 사용할 임계치값 해당 임계치보다 작을경우 객체 re-id탈락
+            self.iou_threshold,
             mahalanobis_distance=self.get_mh_dist_matrix(dets),
             track_confidence=confs,
             detection_confidence=scores,
@@ -254,15 +254,51 @@ class BoostTrack(object):
             lambda_shape=self.lambda_shape
         )
 
+        # 디버깅: 매칭 정보 출력
+        print("\n=== Frame", self.frame_count, "===")
+        print("현재 트래커 ID:", [t.id for t in self.trackers])
+        if len(matched) > 0:
+            print("매칭된 쌍 (det_idx, track_idx):", matched)
+            print("매칭된 트래커 ID:", [self.trackers[m[1]].id for m in matched])
+        if len(unmatched_dets) > 0:
+            print("매칭되지 않은 검출:", unmatched_dets)
+        if len(unmatched_trks) > 0:
+            print("매칭되지 않은 트래커:", unmatched_trks)
+            print("매칭되지 않은 트래커 ID:", [self.trackers[t].id for t in unmatched_trks])
+        
+        if emb_cost is not None and len(emb_cost) > 0:
+            print("\n=== 매칭 상세 정보 ===")
+            print("임베딩 유사도 행렬:")
+            print(emb_cost)
+            print("\n각 트래커의 ID:", [t.id for t in self.trackers])
+            
+            # IOU 행렬 출력
+            iou_matrix = iou_batch(dets, trks)
+            print("\nIOU 행렬:")
+            print(iou_matrix)
+
+            # Mahalanobis 거리 행렬 출력
+            mh_matrix = self.get_mh_dist_matrix(dets)
+            print("\nMahalanobis 거리 행렬:")
+            print(mh_matrix)
+            
+            # 최종 매칭 결과
+            print("\n최종 매칭 (검출 인덱스 -> 트래커 ID):")
+            for m in matched:
+                det_idx, trk_idx = m
+                print(f"검출 {det_idx} -> 트래커 {self.trackers[trk_idx].id} (임베딩 유사도: {emb_cost[det_idx][trk_idx]:.4f}, "
+                      f"IOU: {iou_matrix[det_idx][trk_idx]:.4f}, "
+                      f"Mahalanobis 거리: {mh_matrix[det_idx][trk_idx]:.4f})")
+        
         trust = (dets[:, 4] - self.det_thresh) / (1 - self.det_thresh)
         af = 0.95
         dets_alpha = af + (1 - af) * (1 - trust)
 
-        for m in matched:
+        for m in matched: # 기존 tracking 정보 업데이트
             self.trackers[m[1]].update(dets[m[0], :], scores[m[0]])
             self.trackers[m[1]].update_emb(dets_embs[m[0]], alpha=dets_alpha[m[0]])
 
-        for i in unmatched_dets:
+        for i in unmatched_dets: # re-id가 안된 새로운 id는 tracking추가
             if dets[i, 4] >= self.det_thresh:
                 self.trackers.append(KalmanBoxTracker(dets[i, :], emb=dets_embs[i]))
 
@@ -272,7 +308,7 @@ class BoostTrack(object):
             d = trk.get_state()[0]
             if (trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
                 # +1 as MOT benchmark requires positive
-                ret.append(np.concatenate((d, [trk.id + 1], [trk.get_confidence()])).reshape(1, -1))
+                ret.append(np.concatenate((d, [trk.id], [trk.get_confidence()])).reshape(1, -1))  
             i -= 1
             # remove dead tracklet
             if trk.time_since_update > self.max_age:
@@ -281,6 +317,8 @@ class BoostTrack(object):
         if len(ret) > 0:
             return np.concatenate(ret)
         return np.empty((0, 5))
+
+
 
     def dump_cache(self):
         if self.ecc is not None:

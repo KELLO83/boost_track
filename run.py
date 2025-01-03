@@ -1,5 +1,6 @@
 import os
 import cv2
+from cv2.gapi.ot import TRACKED
 import numpy as np
 import torch
 import argparse
@@ -52,9 +53,9 @@ def main():
     global id
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="plane/cam0")
+    parser.add_argument("--img_path", type=str, default="plane/cam2")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL'],
-                        default='convNext',
+                        default='CLIP_RGB',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
@@ -140,7 +141,11 @@ def main():
         if dets is None or len(dets) == 0:
             continue
             
-
+        # YOLO 검출 결과에 번호 추가
+        for i, (x1, y1, x2, y2, conf) in enumerate(dets):
+            cv2.putText(yolo_plot, f"#{i}", (int(x2)-30, int(y1)+20), 
+                      cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)
+        
         img_rgb = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
         img_tensor = torch.from_numpy(img_rgb).float().cuda()
         img_tensor = img_tensor.permute(2, 0, 1).unsqueeze(0) 

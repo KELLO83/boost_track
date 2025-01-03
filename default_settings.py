@@ -103,10 +103,7 @@ class BoostTrackConfig:
                  ):
         
         
-        self.model_name = model_name
-        
-        self.feature_avg = feature_avg # 임베딩 벡터 평균사용? 및 최근 벡터 사용?
-        
+        self.model_name = model_name    
         self.local_feature = local_feature
         
         if not os.path.exists(reid_model_path):

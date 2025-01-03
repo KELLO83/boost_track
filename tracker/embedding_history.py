@@ -77,12 +77,20 @@ class MeanEmbeddingHistory:
         if len(trackers) == 0 or dets_embs.size == 0:
             return np.array([])
 
+        # 디버깅: 트래커 정보 출력
+        print("\n=== 임베딩 유사도 계산 ===")
+        print("트래커 수:", len(trackers))
+        print("검출 수:", len(dets_embs))
+
         # 트래커들의 평균 임베딩 수집
         trk_embs = []
         for t in range(len(trackers)):
             mean_emb = self.get_mean_embedding(t)
             if mean_emb is None:  # 히스토리가 없는 경우 현재 임베딩 사용
                 mean_emb = trackers[t].get_emb()
+                print(f"트래커 {trackers[t].id}: 히스토리 없음, 현재 임베딩 사용")
+            else:
+                print(f"트래커 {trackers[t].id}: 평균 임베딩 사용 (히스토리 크기: {len(self.embedding_history.get(t, []))})")
             trk_embs.append(mean_emb)
         trk_embs = np.array(trk_embs)  # shape: [M, D]
 
@@ -118,3 +126,109 @@ class MeanEmbeddingHistory:
         """모든 히스토리 초기화"""
         self.embedding_history.clear()
         self.mean_embeddings.clear()
+
+
+
+class TemplateEmbeddingHistory:
+    def __init__(self, max_templates=3, similarity_threshold=0.7):
+        self.template_embeddings = {}  # id -> [embeddings]
+        self.max_templates = max_templates
+        self.similarity_threshold = similarity_threshold
+        
+    def update(self, track_id, embedding):
+        if track_id not in self.template_embeddings:
+            self.template_embeddings[track_id] = [embedding]
+            return
+            
+        templates = self.template_embeddings[track_id]
+        
+        # 현재 템플릿들과의 유사도 계산
+        similarities = [np.dot(embedding, temp) for temp in templates]
+        max_similarity = max(similarities) if similarities else 0
+        
+        # 충분히 다른 외관일 경우에만 새 템플릿으로 추가
+        if max_similarity < self.similarity_threshold:
+            if len(templates) < self.max_templates:
+                templates.append(embedding)
+            else:
+                # 가장 덜 사용된 템플릿 교체
+                templates[np.argmin(similarities)] = embedding
+    
+    def compute_batch_similarity(self, query_embs, trackers):
+        cost_matrix = np.zeros((len(query_embs), len(trackers)))
+        
+        for i, query_emb in enumerate(query_embs):
+            for j, tracker in enumerate(trackers):
+                track_id = tracker.id
+                if track_id in self.template_embeddings:
+                    templates = self.template_embeddings[track_id]
+                    # 모든 템플릿과의 유사도 중 최대값 사용
+                    similarities = [np.dot(query_emb, temp) for temp in templates]
+                    cost_matrix[i, j] = max(similarities)
+                
+        return cost_matrix
+    
+    
+    
+class EnhancedTemplateEmbeddingHistory:
+    def __init__(self, max_templates=3, similarity_threshold=0.7, temporal_weight=0.8):
+        self.template_embeddings = {}  # id -> [(embedding, score, timestamp)]
+        self.max_templates = max_templates
+        self.similarity_threshold = similarity_threshold
+        self.temporal_weight = temporal_weight
+        self.template_scores = {}  # id -> [score for each template]
+        
+    def update(self, track_id, embedding, timestamp):
+        if track_id not in self.template_embeddings:
+            self.template_embeddings[track_id] = [(embedding, 1.0, timestamp)]
+            self.template_scores[track_id] = [1.0]
+            return
+            
+        templates = [t[0] for t in self.template_embeddings[track_id]]
+        scores = self.template_scores[track_id]
+        
+        # 현재 템플릿들과의 유사도 계산 (코사인 유사도 사용)
+        similarities = [self._cosine_similarity(embedding, temp) for temp in templates]
+        max_similarity = max(similarities) if similarities else 0
+        
+        # 템플릿 점수 업데이트 (시간 가중치 적용)
+        for i in range(len(scores)):
+            time_diff = timestamp - self.template_embeddings[track_id][i][2]
+            scores[i] *= self.temporal_weight ** time_diff
+        
+        if max_similarity < self.similarity_threshold:
+            if len(templates) < self.max_templates:
+                templates.append(embedding)
+                scores.append(1.0)
+                self.template_embeddings[track_id].append((embedding, 1.0, timestamp))
+            else:
+                # 점수와 유사도를 모두 고려하여 교체할 템플릿 선택
+                replacement_idx = self._select_replacement_template(scores, similarities)
+                self.template_embeddings[track_id][replacement_idx] = (embedding, 1.0, timestamp)
+                scores[replacement_idx] = 1.0
+                
+    def _cosine_similarity(self, emb1, emb2):
+        """코사인 유사도 계산 (더 정확한 유사도 측정)"""
+        return np.dot(emb1, emb2) / (np.linalg.norm(emb1) * np.linalg.norm(emb2))
+    
+    def _select_replacement_template(self, scores, similarities):
+        """교체할 템플릿 선택 (점수와 유사도 모두 고려)"""
+        combined_scores = [score * (1 - sim) for score, sim in zip(scores, similarities)]
+        return np.argmin(combined_scores)
+    
+    def compute_batch_similarity(self, query_embs, trackers):
+        cost_matrix = np.zeros((len(query_embs), len(trackers)))
+        
+        for i, query_emb in enumerate(query_embs):
+            for j, tracker in enumerate(trackers):
+                track_id = tracker.id
+                if track_id in self.template_embeddings:
+                    templates = [t[0] for t in self.template_embeddings[track_id]]
+                    scores = self.template_scores[track_id]
+                    
+                    # 코사인 유사도와 템플릿 점수를 결합
+                    similarities = [self._cosine_similarity(query_emb, temp) * score 
+                                 for temp, score in zip(templates, scores)]
+                    cost_matrix[i, j] = max(similarities)
+                
+        return cost_matrix
