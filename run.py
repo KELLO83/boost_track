@@ -53,7 +53,7 @@ def main():
     global id
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="plane/cam2")
+    parser.add_argument("--img_path", type=str, default="plane/cam0")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL'],
                         default='CLIP_RGB',
                         help="""
@@ -68,6 +68,7 @@ def main():
                         """)
     
     parser.add_argument("--reid_model", type=str, default=None)
+    parser.add_argument('--embeding_method',type=str,default='default' , help="임베딩 방법 (가장최근 , 평균)",choices=['default','Mean'])
     
     parser.add_argument('--visualize', action='store_true', default=False, help='Visualize')
     parser.add_argument('--save_video', action='store_true', default=True, help='Save video')
@@ -193,8 +194,9 @@ def main():
         
         if args.save_video:
             if video_writer is None:
+                name = args.model_name
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-                video_path = os.path.join(save_dir, "tracking.mp4")
+                video_path = os.path.join(save_dir, f"{name}_tracking.mp4")
                 video_writer = cv2.VideoWriter(
                     video_path, 
                     fourcc, 

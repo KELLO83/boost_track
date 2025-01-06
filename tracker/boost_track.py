@@ -11,11 +11,13 @@ import cv2
 import numpy as np
 from ultralytics import cfg
 
+
 from default_settings import GeneralSettings, BoostTrackSettings, BoostTrackPlusPlusSettings, BoostTrackConfig
 from tracker.embedding import EmbeddingComputer
 from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch
 from tracker.ecc import ECC
 from tracker.kalmanfilter import KalmanFilter
+from .embedding_factory import EmbeddingHistoryFactory
 from .embedding_history import EmbeddingHistory, MeanEmbeddingHistory, TemplateEmbeddingHistory
 
 def convert_bbox_to_z(bbox):
@@ -169,9 +171,9 @@ class BoostTrack(object):
             self.ecc = None
 
         # 임베딩 히스토리 초기화
-        self.embedding_history = EmbeddingHistory()
-        self.mean_embedding_history = MeanEmbeddingHistory()
-        self.template_history = TemplateEmbeddingHistory()  # 추가
+        embedding_method = GeneralSettings.get_embedding_method()
+        self.embedding_history = EmbeddingHistoryFactory.create(embedding_method)
+                
         
     def update(self, dets, img_tensor, img_numpy, tag):
         """
@@ -233,11 +235,10 @@ class BoostTrack(object):
             for t in range(len(self.trackers)):
                 tracker = self.trackers[t]
                 self.embedding_history.update_embedding(tracker.id, tracker.get_emb())
-                self.mean_embedding_history.update_embedding(tracker.id, tracker.get_emb())
-                
+            
             if len(self.trackers) > 0 and dets.size > 0:
-                emb_cost = self.mean_embedding_history.compute_batch_similarity(dets_embs, self.trackers)
-                    
+                emb_cost = self.embedding_history.compute_batch_similarity(dets_embs, self.trackers)
+            
     
         emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
 
@@ -254,41 +255,41 @@ class BoostTrack(object):
             lambda_shape=self.lambda_shape
         )
 
-        # 디버깅: 매칭 정보 출력
-        print("\n=== Frame", self.frame_count, "===")
-        print("현재 트래커 ID:", [t.id for t in self.trackers])
-        if len(matched) > 0:
-            print("매칭된 쌍 (det_idx, track_idx):", matched)
-            print("매칭된 트래커 ID:", [self.trackers[m[1]].id for m in matched])
-        if len(unmatched_dets) > 0:
-            print("매칭되지 않은 검출:", unmatched_dets)
-        if len(unmatched_trks) > 0:
-            print("매칭되지 않은 트래커:", unmatched_trks)
-            print("매칭되지 않은 트래커 ID:", [self.trackers[t].id for t in unmatched_trks])
+        # # 디버깅: 매칭 정보 출력
+        # print("\n=== Frame", self.frame_count, "===")
+        # print("현재 트래커 ID:", [t.id for t in self.trackers])
+        # if len(matched) > 0:
+        #     print("매칭된 쌍 (det_idx, track_idx):", matched)
+        #     print("매칭된 트래커 ID:", [self.trackers[m[1]].id for m in matched])
+        # if len(unmatched_dets) > 0:
+        #     print("매칭되지 않은 검출:", unmatched_dets)
+        # if len(unmatched_trks) > 0:
+        #     print("매칭되지 않은 트래커:", unmatched_trks)
+        #     print("매칭되지 않은 트래커 ID:", [self.trackers[t].id for t in unmatched_trks])
         
-        if emb_cost is not None and len(emb_cost) > 0:
-            print("\n=== 매칭 상세 정보 ===")
-            print("임베딩 유사도 행렬:")
-            print(emb_cost)
-            print("\n각 트래커의 ID:", [t.id for t in self.trackers])
+        # if emb_cost is not None and len(emb_cost) > 0:
+        #     print("\n=== 매칭 상세 정보 ===")
+        #     print("임베딩 유사도 행렬:")
+        #     print(emb_cost)
+        #     print("\n각 트래커의 ID:", [t.id for t in self.trackers])
             
-            # IOU 행렬 출력
-            iou_matrix = iou_batch(dets, trks)
-            print("\nIOU 행렬:")
-            print(iou_matrix)
+        #     # IOU 행렬 출력
+        #     iou_matrix = iou_batch(detections, trackers)
+        #     print("\nIOU 행렬:")
+        #     print(iou_matrix)
 
-            # Mahalanobis 거리 행렬 출력
-            mh_matrix = self.get_mh_dist_matrix(dets)
-            print("\nMahalanobis 거리 행렬:")
-            print(mh_matrix)
+        #     # Mahalanobis 거리 행렬 출력
+        #     mh_matrix = self.get_mh_dist_matrix(detections)
+        #     print("\nMahalanobis 거리 행렬:")
+        #     print(mh_matrix)
             
-            # 최종 매칭 결과
-            print("\n최종 매칭 (검출 인덱스 -> 트래커 ID):")
-            for m in matched:
-                det_idx, trk_idx = m
-                print(f"검출 {det_idx} -> 트래커 {self.trackers[trk_idx].id} (임베딩 유사도: {emb_cost[det_idx][trk_idx]:.4f}, "
-                      f"IOU: {iou_matrix[det_idx][trk_idx]:.4f}, "
-                      f"Mahalanobis 거리: {mh_matrix[det_idx][trk_idx]:.4f})")
+        #     # 최종 매칭 결과
+        #     print("\n최종 매칭 (검출 인덱스 -> 트래커 ID):")
+        #     for m in matched:
+        #         det_idx, trk_idx = m
+        #         print(f"검출 {det_idx} -> 트래커 {self.trackers[trk_idx].id} (임베딩 유사도: {emb_cost[det_idx][trk_idx]:.4f}, "
+        #               f"IOU: {iou_matrix[det_idx][trk_idx]:.4f}, "
+        #               f"Mahalanobis 거리: {mh_matrix[det_idx][trk_idx]:.4f})")
         
         trust = (dets[:, 4] - self.det_thresh) / (1 - self.det_thresh)
         af = 0.95
