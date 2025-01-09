@@ -304,6 +304,7 @@ class BoostTrack(object):
         print("=== 상세 매칭 정보 ===\n")
         print("[임베딩 유사도 행렬]")
         if emb_cost is not None:
+            pd.set_option('display.float_format', lambda x: '%.5f' % x)
             df = pd.DataFrame(emb_cost, columns=[f'ID_{t.id}' for t in self.trackers])
             df.index = [f'Det_{i}' for i in range(len(emb_cost))]
             print(df)
@@ -311,11 +312,13 @@ class BoostTrack(object):
             print("임베딩 정보 없음")
             
         print("\n[IOU 행렬]")
+        pd.set_option('display.float_format', lambda x: '%.5f' % x)
         df = pd.DataFrame(iou_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
         df.index = [f'Det_{i}' for i in range(len(iou_matrix))]
         print(df)
         
         print("\n[마할라노비스 거리 행렬]")
+        pd.set_option('display.float_format', lambda x: '%.5f' % x)
         df = pd.DataFrame(mh_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
         df.index = [f'Det_{i}' for i in range(len(mh_matrix))]
         print(df)

@@ -55,7 +55,7 @@ def main():
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--img_path", type=str, default="plane/cam0")
     parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL'],
-                        default='CLIP_RGB',
+                        default='swinv2',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
@@ -70,9 +70,9 @@ def main():
     parser.add_argument("--reid_model", type=str, default=None)
     parser.add_argument('--embeding_method',type=str,default='default' , help="임베딩 방법 (가장최근 , 평균)",choices=['default','Mean'])
     
-    parser.add_argument('--visualize', action='store_true', default = True, help='Visualize')
+    parser.add_argument('--visualize', action='store_true', default = False, help='Visualize')
     parser.add_argument('--save_video', action='store_true', default=True, help='Save video')
-    parser.add_argument('--save_frame' ,action='store_true', default=True, help='Save frame')
+    parser.add_argument('--save_frame' ,action='store_true', default=False, help='Save frame')
     args = parser.parse_args()
 
     if args.reid_model is None:
@@ -91,12 +91,12 @@ def main():
         min_hits=5, 
         
         det_thresh= 0.4, # up # 객체 신뢰도가 det_thresh 이상일떄 tracking추적 
-        iou_threshold=0.8,  # 객체 re-id에 사용하는 임계점 1. iou > iou_threshold or iou//2 +  emb_sim_score > emb_sim_score
+        iou_threshold=0.9,  # 객체 re-id에 사용하는 임계점 1. iou > iou_threshold or iou//2 +  emb_sim_score > emb_sim_score
         emb_sim_score = 0.75, # 임베딩 유사도 re-id에서 사용
         
-        lambda_iou=0.7, # re-id 가중치
-        lambda_mhd=0.25, # re-id 가중치
-        lambda_shape=0.35, # re-id 가중치
+        lambda_iou=0.05, # re-id 가중치 default = 0.7
+        lambda_mhd=0.25, # re-id 가중치 default = 0.25
+        lambda_shape=0.95, # re-id 가중치 임베딩 모양 default = 0.35
         
         use_dlo_boost=True, # (Detection - by - Localization) # 이전프레임의 추적정보를 활용하여 검출객체의 신뢰도 향상
         use_duo_boost=True,# (Detection - by - Union) # 겹치는 검출영역 통합 신뢰도향상
@@ -181,7 +181,7 @@ def main():
 
 
 
-        if args.visualize :                
+        if args.visualize and idx > 470 :   # 470 + 11
             cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
             cv2.imshow('yolo', yolo_plot)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
@@ -213,6 +213,7 @@ def main():
     # 비디오 저장 종료
     if video_writer is not None:
         video_writer.release()
+        print("save path : ", video_path)
 
 if __name__ == "__main__":
     main()
