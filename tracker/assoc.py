@@ -129,7 +129,7 @@ def match(cost_matrix: np.ndarray, threshold: float) -> np.ndarray:
 
 def linear_assignment(detections: np.ndarray, trackers: np.ndarray,
                       iou_matrix: np.ndarray, cost_matrix: np.ndarray,
-                      threshold: float, emb_cost: Optional[np.ndarray] = None):
+                      threshold: float, emb_cost: Optional[np.ndarray] = None, emb_sim_score: float = 0.75):
     if iou_matrix is None and cost_matrix is None:
         raise Exception("Both iou_matrix and cost_matrix are None!")
     if iou_matrix is None:
@@ -149,12 +149,12 @@ def linear_assignment(detections: np.ndarray, trackers: np.ndarray,
     # filter out matched with low IOU
     matches = []
     for m in matched_indices:
-        # IOU가 threshold 이상이거나, IOU가 threshold/2 이상이고 임베딩 유사도가 0.6 이상인 경우
+        # IOU가 threshold 이상이거나, IOU가 threshold/2 이상이고 임베딩 유사도가 emb_sim_score 이상인 경우
         valid_match = (
             iou_matrix[m[0], m[1]] >= threshold or 
             (False if emb_cost is None else 
              (iou_matrix[m[0], m[1]] >= threshold / 2 and 
-              emb_cost[m[0], m[1]] >= 0.75))  # TransReID는 더 높은 임계값 사용
+              emb_cost[m[0], m[1]] >= emb_sim_score)) 
         )
         if valid_match:
             matches.append(m.reshape(1, 2))
@@ -171,17 +171,24 @@ def linear_assignment(detections: np.ndarray, trackers: np.ndarray,
 
 
 def associate(
-        detections,
-        trackers,
-        iou_threshold,
-        mahalanobis_distance: Optional[np.ndarray] = None,
-        track_confidence: Optional[np.ndarray] = None,
-        detection_confidence: Optional[np.ndarray] = None,
-        emb_cost: Optional[np.ndarray] = None,
-        lambda_iou: float = 0.5,
-        lambda_mhd: float = 0.25,
-        lambda_shape: float = 0.25
+        detections: np.ndarray,
+        trackers: np.ndarray,
+        iou_threshold: float,
+        mahalanobis_distance: np.ndarray = None,
+        track_confidence: np.ndarray = None,
+        detection_confidence: np.ndarray = None,
+        emb_cost: np.ndarray = None,
+        emb_sim_score: float = None,
+        lambda_iou: float = None,
+        lambda_mhd: float = None,
+        lambda_shape: float = None
 ):
+
+    if emb_sim_score is None or lambda_iou is None or lambda_mhd is None or lambda_shape is None:
+        print("emb_sim_score : {} lambda_iou : {} lambda_mhd : {} lambda_shape : {}".format(emb_sim_score, lambda_iou, lambda_mhd, lambda_shape))
+        raise Exception("emb_sim_score, lambda_iou, lambda_mhd, lambda_shape must be specified!")
+    
+
     if len(trackers) == 0:
         return (
             np.empty((0, 2), dtype=int),
@@ -213,4 +220,4 @@ def associate(
         lambda_emb = (1+lambda_iou+lambda_shape+lambda_mhd) * 1.5
         cost_matrix += lambda_emb * emb_cost
 
-    return linear_assignment(detections, trackers, iou_matrix, cost_matrix, iou_threshold, emb_cost)
+    return linear_assignment(detections, trackers, iou_matrix, cost_matrix, iou_threshold, emb_cost, emb_sim_score)

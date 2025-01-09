@@ -90,7 +90,6 @@ class BoostTrackConfig:
                  iou_threshold: float = 0.3,
                  use_reid: bool = True,
                  use_cmc: bool = True,
-                 dataset: str = 'mot17',
                  min_box_area: int = 5000,
                  aspect_ratio_thresh: float = 1.4,
                  lambda_iou: float = 0.5,
@@ -106,8 +105,10 @@ class BoostTrackConfig:
                  local_feature : bool = False,
                  feature_avg : bool = False,
                  model_name : str = '',
+                 emb_sim_score = 0.75,
                  ):
         
+        self.emb_sim_score = emb_sim_score
         
         self.model_name = model_name    
         self.local_feature = local_feature
@@ -123,7 +124,6 @@ class BoostTrackConfig:
         self.iou_threshold = iou_threshold
         self.use_reid = use_reid
         self.use_cmc = use_cmc
-        self.dataset = dataset
         self.min_box_area = min_box_area
         self.aspect_ratio_thresh = aspect_ratio_thresh
         

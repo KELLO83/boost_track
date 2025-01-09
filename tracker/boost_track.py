@@ -6,6 +6,7 @@ from __future__ import print_function
 import os
 from copy import deepcopy
 from typing import Optional, List
+import pandas as pd
 
 import cv2
 import numpy as np
@@ -14,7 +15,7 @@ from ultralytics import cfg
 
 from default_settings import GeneralSettings, BoostTrackSettings, BoostTrackPlusPlusSettings, BoostTrackConfig
 from tracker.embedding import EmbeddingComputer
-from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch
+from tracker.assoc import associate, iou_batch, MhDist_similarity, shape_similarity, soft_biou_batch, linear_assignment
 from tracker.ecc import ECC
 from tracker.kalmanfilter import KalmanFilter
 from .embedding_factory import EmbeddingHistoryFactory
@@ -33,7 +34,7 @@ def convert_bbox_to_z(bbox):
 
     r = w / float(h + 1e-6)
 
-    return np.array([x, y, h, r]).reshape((4, 1))
+    return np.array([x, y, h,  r]).reshape((4, 1))
 
 
 
@@ -140,12 +141,16 @@ class BoostTrack(object):
         self.frame_count = 0
         self.trackers = []
         
+        #임베딩 유사도값 
+        self.emb_sim_score = cfg.emb_sim_score
+        
         # 설정 적용
         self.max_age = cfg.max_age
         self.min_hits = cfg.min_hits
         self.det_thresh = cfg.det_thresh
         self.iou_threshold = cfg.iou_threshold
         
+        # 매칭 알고리즘에 사용할 가중치
         self.lambda_iou = cfg.lambda_iou
         self.lambda_mhd = cfg.lambda_mhd
         self.lambda_shape = cfg.lambda_shape
@@ -204,6 +209,17 @@ class BoostTrack(object):
                 trk.camera_update(transform)
 
         trks = np.zeros((len(self.trackers), 5))
+        
+        
+                
+        # 비활성 트래커 관리
+        current_inactive = []
+        for trk in self.trackers:
+            if trk.time_since_update > 1 and trk.time_since_update <= self.max_age * 2:
+                if trk not in self.inactive_trackers:  # 중복 방지
+                    current_inactive.append(trk)
+        self.inactive_trackers = current_inactive
+                
         confs = np.zeros((len(self.trackers), 1))
 
         for t in range(len(trks)):
@@ -242,6 +258,11 @@ class BoostTrack(object):
     
         emb_cost = None if self.embedder is None else emb_cost  # 임베딩 계산기가 없으면 None 반환
 
+        iou_matrix = iou_batch(dets, trks[:, :4])
+        mh_matrix = self.get_mh_dist_matrix(dets)
+        cost_matrix = (self.lambda_iou * iou_matrix + self.lambda_mhd * mh_matrix + self.lambda_shape * shape_similarity(dets, trks)) / (self.lambda_iou + self.lambda_mhd + self.lambda_shape)
+        
+        # 매칭 수행
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
             trks,
@@ -250,46 +271,65 @@ class BoostTrack(object):
             track_confidence=confs,
             detection_confidence=scores,
             emb_cost=emb_cost,
+            emb_sim_score=self.emb_sim_score,
             lambda_iou=self.lambda_iou,
             lambda_mhd=self.lambda_mhd,
             lambda_shape=self.lambda_shape
         )
-
-        # # 디버깅: 매칭 정보 출력
-        # print("\n=== Frame", self.frame_count, "===")
-        # print("현재 트래커 ID:", [t.id for t in self.trackers])
-        # if len(matched) > 0:
-        #     print("매칭된 쌍 (det_idx, track_idx):", matched)
-        #     print("매칭된 트래커 ID:", [self.trackers[m[1]].id for m in matched])
-        # if len(unmatched_dets) > 0:
-        #     print("매칭되지 않은 검출:", unmatched_dets)
-        # if len(unmatched_trks) > 0:
-        #     print("매칭되지 않은 트래커:", unmatched_trks)
-        #     print("매칭되지 않은 트래커 ID:", [self.trackers[t].id for t in unmatched_trks])
         
-        # if emb_cost is not None and len(emb_cost) > 0:
-        #     print("\n=== 매칭 상세 정보 ===")
-        #     print("임베딩 유사도 행렬:")
-        #     print(emb_cost)
-        #     print("\n각 트래커의 ID:", [t.id for t in self.trackers])
+        print(f"\n{'='*50}")
+        print(f"프레임 {self.frame_count}")
+        print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
+        print(f"비활성 트래커 ID: {[t.id for t in self.inactive_trackers]}\n")
+        
+        if len(matched) > 0:
+            print("[매칭된 정보]")
+            print(f"검출-트래커 쌍: {matched}")
+            print(f"매칭된 트래커 ID: {[self.trackers[t].id for t in matched[:, 1]]}")
+            print("\n[검출 객체 -> 트래커 ID 매핑]")
+            for m in matched:
+                det_idx, trk_idx = m
+                trk_id = self.trackers[trk_idx].id
+                print(f"검출 {det_idx} -> ID {trk_id}")
+            print()
+        
+        if len(unmatched_dets) > 0:
+            print(f"[매칭되지 않은 검출]: {unmatched_dets}\n")
+        
+        if len(unmatched_trks) > 0:
+            print("[매칭되지 않은 트래커]")
+            print(f"인덱스: {unmatched_trks}")
+            print(f"트래커 ID: {[self.trackers[t].id for t in unmatched_trks]}\n")
+        
+        print("=== 상세 매칭 정보 ===\n")
+        print("[임베딩 유사도 행렬]")
+        if emb_cost is not None:
+            df = pd.DataFrame(emb_cost, columns=[f'ID_{t.id}' for t in self.trackers])
+            df.index = [f'Det_{i}' for i in range(len(emb_cost))]
+            print(df)
+        else:
+            print("임베딩 정보 없음")
             
-        #     # IOU 행렬 출력
-        #     iou_matrix = iou_batch(detections, trackers)
-        #     print("\nIOU 행렬:")
-        #     print(iou_matrix)
-
-        #     # Mahalanobis 거리 행렬 출력
-        #     mh_matrix = self.get_mh_dist_matrix(detections)
-        #     print("\nMahalanobis 거리 행렬:")
-        #     print(mh_matrix)
-            
-        #     # 최종 매칭 결과
-        #     print("\n최종 매칭 (검출 인덱스 -> 트래커 ID):")
-        #     for m in matched:
-        #         det_idx, trk_idx = m
-        #         print(f"검출 {det_idx} -> 트래커 {self.trackers[trk_idx].id} (임베딩 유사도: {emb_cost[det_idx][trk_idx]:.4f}, "
-        #               f"IOU: {iou_matrix[det_idx][trk_idx]:.4f}, "
-        #               f"Mahalanobis 거리: {mh_matrix[det_idx][trk_idx]:.4f})")
+        print("\n[IOU 행렬]")
+        df = pd.DataFrame(iou_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
+        df.index = [f'Det_{i}' for i in range(len(iou_matrix))]
+        print(df)
+        
+        print("\n[마할라노비스 거리 행렬]")
+        df = pd.DataFrame(mh_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
+        df.index = [f'Det_{i}' for i in range(len(mh_matrix))]
+        print(df)
+        
+        print("\n[최종 매칭 결과 상세]")
+        for m in matched:
+            det_idx, trk_idx = m
+            trk_id = self.trackers[trk_idx].id
+            print(f"검출 {det_idx} -> ID {trk_id} (임베딩: {emb_cost[det_idx, trk_idx]:.5f}, "
+                  f"IOU: {iou_matrix[det_idx, trk_idx]:.5f}, "
+                  f"마할라노비스: {mh_matrix[det_idx, trk_idx]:.5f})")
+        
+        print(f"\n{'='*50}")
+        
         
         trust = (dets[:, 4] - self.det_thresh) / (1 - self.det_thresh)
         af = 0.95

@@ -70,7 +70,7 @@ def main():
     parser.add_argument("--reid_model", type=str, default=None)
     parser.add_argument('--embeding_method',type=str,default='default' , help="임베딩 방법 (가장최근 , 평균)",choices=['default','Mean'])
     
-    parser.add_argument('--visualize', action='store_true', default=False, help='Visualize')
+    parser.add_argument('--visualize', action='store_true', default = True, help='Visualize')
     parser.add_argument('--save_video', action='store_true', default=True, help='Save video')
     parser.add_argument('--save_frame' ,action='store_true', default=True, help='Save frame')
     args = parser.parse_args()
@@ -87,13 +87,17 @@ def main():
     tracker = BoostTrack(BoostTrackConfig(
         reid_model_path=f'external/weights/{args.reid_model}',
         device='cuda',
-        max_age=100, 
-        min_hits=5, # 3 -> 5
-        det_thresh=0.4, # up # re id에서 사용하는 객체 임계도
-        iou_threshold=0.4, # up
-        lambda_iou=0.7,
-        lambda_mhd=0.25,
-        lambda_shape=0.35, # up
+        max_age=30, 
+        min_hits=5, 
+        
+        det_thresh= 0.4, # up # 객체 신뢰도가 det_thresh 이상일떄 tracking추적 
+        iou_threshold=0.8,  # 객체 re-id에 사용하는 임계점 1. iou > iou_threshold or iou//2 +  emb_sim_score > emb_sim_score
+        emb_sim_score = 0.75, # 임베딩 유사도 re-id에서 사용
+        
+        lambda_iou=0.7, # re-id 가중치
+        lambda_mhd=0.25, # re-id 가중치
+        lambda_shape=0.35, # re-id 가중치
+        
         use_dlo_boost=True, # (Detection - by - Localization) # 이전프레임의 추적정보를 활용하여 검출객체의 신뢰도 향상
         use_duo_boost=True,# (Detection - by - Union) # 겹치는 검출영역 통합 신뢰도향상
         dlo_boost_coef=0.75, # up
