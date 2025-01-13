@@ -27,7 +27,8 @@ MODEL_WEIGHTS = {
     'CLIP': 'CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth',
     'CLIP_RGB': 'CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth',
     'La_Transformer': 'LaTransformer.pth',
-    'CTL': 'CTL.pth'
+    'CTL': 'CTL.pth' , 
+    'VIT-B/16+ICS_SSL' : 'vit_base_ics_cfs_lup.pth'
 }
 
 def get_id_color(id):
@@ -53,9 +54,9 @@ def main():
     global id
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="plane/cam0")
-    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL'],
-                        default='swinv2',
+    parser.add_argument("--img_path", type=str, default="plane/cam2")
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL','VIT-B/16+ICS_SSL'],
+                        default='VIT-B/16+ICS_SSL',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
@@ -65,12 +66,14 @@ def main():
                         - CLIP_RGB : CLIP + RGB AVERAGE DIVIATION
                         --La_Transformer
                         --CTL
+                        --VIT-B/16+ICS_SSL
+                        
                         """)
     
     parser.add_argument("--reid_model", type=str, default=None)
-    parser.add_argument('--embeding_method',type=str,default='default' , help="임베딩 방법 (가장최근 , 평균)",choices=['default','Mean'])
+    parser.add_argument('--emb_method',type=str,default='enhanced_mean_V2' , help="임베딩 방법 (가장최근 , 평균, 향상된 평균)",choices=['default','mean','enhanced_mean','enhanced_mean_V2'])
     
-    parser.add_argument('--visualize', action='store_true', default = False, help='Visualize')
+    parser.add_argument('--visualize', action='store_true', default = True, help='Visualize')
     parser.add_argument('--save_video', action='store_true', default=True, help='Save video')
     parser.add_argument('--save_frame' ,action='store_true', default=False, help='Save frame')
     args = parser.parse_args()
@@ -82,7 +85,9 @@ def main():
     # 설정
     GeneralSettings.values['use_embedding'] = True
     GeneralSettings.values['use_ecc'] = False # 카메라 움직임 보정 
-
+    GeneralSettings.values['embedding_method'] = args.emb_method
+    
+    
     model = YOLO(args.yolo_model)
     tracker = BoostTrack(BoostTrackConfig(
         reid_model_path=f'external/weights/{args.reid_model}',
@@ -92,7 +97,7 @@ def main():
         
         det_thresh= 0.4, # up # 객체 신뢰도가 det_thresh 이상일떄 tracking추적 
         iou_threshold=0.9,  # 객체 re-id에 사용하는 임계점 1. iou > iou_threshold or iou//2 +  emb_sim_score > emb_sim_score
-        emb_sim_score = 0.75, # 임베딩 유사도 re-id에서 사용
+        emb_sim_score = 0.60, # 임베딩 유사도 re-id에서 사용 후보군 선택시  이상인것들만 후보로 선택
         
         lambda_iou=0.05, # re-id 가중치 default = 0.7
         lambda_mhd=0.25, # re-id 가중치 default = 0.25
@@ -198,7 +203,7 @@ def main():
         
         if args.save_video:
             if video_writer is None:
-                name = args.model_name
+                name = args.model_name + '_' + args.emb_method + '_' + args.img_path.split('/')[-1]
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                 video_path = os.path.join(save_dir, f"{name}_tracking.mp4")
                 video_writer = cv2.VideoWriter(

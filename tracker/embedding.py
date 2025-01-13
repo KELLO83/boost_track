@@ -9,7 +9,7 @@ import cv2
 import torchvision
 import numpy as np
 import torchvision.transforms as T
-#from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
+from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
 import torch.nn.functional as F
@@ -365,7 +365,6 @@ class EmbeddingComputer:
         
             return
         
-        
         if self.model_type == 'convNext':
 
             from .ConvNeXt.models.convnext import ConvNeXt
@@ -485,40 +484,71 @@ class EmbeddingComputer:
             
             self.model.eval()
         
-        else:
-            print("TransReID ViT model loading...")
+        if self.model_type =='VIT-B/16+ICS_SSL':
+            print("TransReID-SSL VIT-Base+ICS model loading...")
+            
+            # 패치 크기는 16x16으로 고정 (vit_base_patch16_224_TransReID에서 하드코딩)
             self.model = VIT_EXTEND(
-                img_size = self.crop_size,     # input image size
-                stride_size=16,          # patch (feature) extraction stride
+                img_size = (256, 128),         # 16x8 패치 구조를 위한 크기
+                stride_size=16,                # 패치 크기는 16x16으로 고정
                 drop_rate=0.0,
                 attn_drop_rate=0.0,
                 drop_path_rate=0.1,
-                camera=0,                # SIE 완전 비활성화
-                view=0,                  # SIE 완전 비활성화
-                sie_xishu=0.0,          # SIE 비율
-                local_feature=True,     # local feature extraction
-                num_classes=1           # number of classification classes
+                camera=0,                      # SIE 비활성화
+                view=0,                        # SIE 비활성화
+                sie_xishu=0.0,                # SIE 완전 비활성화
+                local_feature=False,            # 중간 feature map 사용
+                gem_pool=False,               # Global average pooling 사용 안함
+                stem_conv=True,               # Stem convolution 사용
+                num_classes=0                 # FC layer 제거
             )
-        
-        checkpoint = torch.load(self.config.reid_model_path)
-        if 'state_dict' in checkpoint:
-            state_dict = checkpoint['state_dict']
-        elif 'model' in checkpoint:
-            state_dict = checkpoint['model']
-        else:
-            state_dict = checkpoint
             
-        new_state_dict = OrderedDict()
-        for k, v in state_dict.items():
-            if k.startswith('module.'):
-                k = k[7:]
-            if k.startswith('backbone.'):
-                k = k[9:]
-            new_state_dict[k] = v
-        
-        self.model.load_state_dict(new_state_dict, strict=False) # strict 매칭된 가중치만 로딩
-        self.model.eval()
-
+            print("Model configuration:")
+            print(f"- Architecture: ViT-Base (768 dim, 12 heads)")
+            print(f"- Input size: 256x128")
+            print(f"- Patch size: 16x16 (16x8 patches)")
+            print(f"- Local feature: Enabled (return intermediate features)")
+            print(f"- SIE: Disabled")
+            print(f"- STEM_CONV: Enabled")
+            
+            checkpoint = torch.load(weight_path, map_location=self.device)
+            
+            print("\nModel architecture before removing FC:")
+            print(self.model)
+            
+            
+            # Remove FC layer
+            self.model.fc = nn.Identity()
+            print("\nModel architecture after removing FC:")
+            print(self.model)
+            
+            self.model.to(self.device)
+            # Test with dummy input to check feature map shapes
+            print("\nFeature map shapes:")
+            B = 1  # batch size
+            dummy_input = torch.randn(B, 3, 256, 128).to(self.device)
+            with torch.no_grad():
+                features = self.model.forward_features(dummy_input, None, None)
+                if isinstance(features, tuple):
+                    for i, feat in enumerate(features):
+                        print(f"Feature {i} shape: {feat.shape}")
+                else:
+                    print(f"Feature shape: {features.shape}")
+            
+            # Filter out unexpected keys
+            model_dict = self.model.state_dict()
+            filtered_state_dict = {k: v for k, v in checkpoint.items() if k in model_dict}
+            missing_keys = [k for k in model_dict.keys() if k not in filtered_state_dict]
+            unexpected_keys = [k for k in checkpoint.keys() if k not in model_dict]
+            
+            if unexpected_keys:
+                print("Unexpected keys in state_dict:", unexpected_keys)
+            if missing_keys:
+                print("Missing keys in state_dict:", missing_keys)
+            
+            # Load filtered weights
+            self.model.load_state_dict(filtered_state_dict, strict=False) 
+            self.model.eval()
 
 
     def preprocess_with_rgb_stats(self, batch_img):

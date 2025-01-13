@@ -340,7 +340,10 @@ class BoostTrack(object):
 
         for m in matched: # 기존 tracking 정보 업데이트
             self.trackers[m[1]].update(dets[m[0], :], scores[m[0]])
-            self.trackers[m[1]].update_emb(dets_embs[m[0]], alpha=dets_alpha[m[0]])
+            if dets_embs is not None:
+                self.trackers[m[1]].update_emb(dets_embs[m[0]])
+                # 임베딩 히스토리 업데이트
+                self.embedding_history.update_embedding(self.trackers[m[1]].id, dets_embs[m[0]])
 
         for i in unmatched_dets: # re-id가 안된 새로운 id는 tracking추가
             if dets[i, 4] >= self.det_thresh:
