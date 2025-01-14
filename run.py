@@ -1,6 +1,6 @@
 import os
 import cv2
-from cv2.gapi.ot import TRACKED
+# from cv2.gapi.ot import TRACKED
 import numpy as np
 import torch
 import argparse
@@ -28,7 +28,9 @@ MODEL_WEIGHTS = {
     'CLIP_RGB': 'CLIPReID_MSMT17_clipreid_12x12sie_ViT-B-16_60.pth',
     'La_Transformer': 'LaTransformer.pth',
     'CTL': 'CTL.pth' , 
-    'VIT-B/16+ICS_SSL' : 'vit_base_ics_cfs_lup.pth'
+    
+    'VIT-B/16+ICS_SSL' : 'vit_base_ics_cfs_lup.pth', # TransReid_SELF SUPERVISED PRETRINED
+    'VIT_SSL_MARKET' : 'VIT_SSL_MSMT17_L.pth' #TransReid_SELF SUPERVISED MARKET ViT-B/16+ICS MARKET PRETRINED
 }
 
 def get_id_color(id):
@@ -55,25 +57,27 @@ def main():
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
     parser.add_argument("--img_path", type=str, default="plane/cam2")
-    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB','La_Transformer','CTL','VIT-B/16+ICS_SSL'],
-                        default='VIT-B/16+ICS_SSL',
+    parser.add_argument("--model_name", type=str , choices=['convNext', 'dinov2', 'swinv2','CLIP','CLIP_RGB',
+                                                            'La_Transformer','CTL','VIT-B/16+ICS_SSL','VIT_SSL_MARKET'],
+                        default='CLIP',
                         help="""
                         Select model type:
                         - convNext : ConvNext-B
                         - dinov2 : Dinov2-B
                         - swinv2 : Swin-B
-                        - CLIP : CLIP + RGB AVERAGE DIVIATION
+                        - CLIP : CLIP 
                         - CLIP_RGB : CLIP + RGB AVERAGE DIVIATION
                         --La_Transformer
                         --CTL
                         --VIT-B/16+ICS_SSL
-                        
+
+                        --VIT_SSL_MARKET
                         """)
     
     parser.add_argument("--reid_model", type=str, default=None)
-    parser.add_argument('--emb_method',type=str,default='enhanced_mean_V2' , help="임베딩 방법 (가장최근 , 평균, 향상된 평균)",choices=['default','mean','enhanced_mean','enhanced_mean_V2'])
+    parser.add_argument('--emb_method',type=str,default='default' , help="임베딩 방법 (가장최근 , 평균, 향상된 평균)",choices=['default','mean','enhanced_mean','enhanced_mean_V2'])
     
-    parser.add_argument('--visualize', action='store_true', default = True, help='Visualize')
+    parser.add_argument('--visualize', action='store_true', default = False, help='Visualize')
     parser.add_argument('--save_video', action='store_true', default=True, help='Save video')
     parser.add_argument('--save_frame' ,action='store_true', default=False, help='Save frame')
     args = parser.parse_args()
@@ -129,7 +133,10 @@ def main():
     # print(stop_frame_ids)
     video_writer = None
     model_name = os.path.splitext(args.reid_model)[0]
-    save_dir = f'{args.model_name}_res'
+    if model_name == 'VIT-B/16+ICS_SSL':
+        model_name = 'VIT_SSL_BASE'
+        
+    save_dir = f'{args.model_name}_view'
     print("save_dir : ", save_dir)
     os.makedirs(save_dir, exist_ok=True)
     
@@ -186,7 +193,7 @@ def main():
 
 
 
-        if args.visualize and idx > 470 :   # 470 + 11
+        if args.visualize :   # 470 + 11
             cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
             cv2.imshow('yolo', yolo_plot)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
@@ -203,7 +210,7 @@ def main():
         
         if args.save_video:
             if video_writer is None:
-                name = args.model_name + '_' + args.emb_method + '_' + args.img_path.split('/')[-1]
+                name = model_name + '_' + args.emb_method + '_' + args.img_path.split('/')[-1]
                 fourcc = cv2.VideoWriter_fourcc(*"mp4v")
                 video_path = os.path.join(save_dir, f"{name}_tracking.mp4")
                 video_writer = cv2.VideoWriter(
