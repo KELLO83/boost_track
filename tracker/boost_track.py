@@ -311,25 +311,25 @@ class BoostTrack(object):
         else:
             print("임베딩 정보 없음")
             
-        print("\n[IOU 행렬]")
-        pd.set_option('display.float_format', lambda x: '%.5f' % x)
-        df = pd.DataFrame(iou_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
-        df.index = [f'Det_{i}' for i in range(len(iou_matrix))]
-        print(df)
+        # print("\n[IOU 행렬]")
+        # pd.set_option('display.float_format', lambda x: '%.5f' % x)
+        # df = pd.DataFrame(iou_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
+        # df.index = [f'Det_{i}' for i in range(len(iou_matrix))]
+        # print(df)
         
-        print("\n[마할라노비스 거리 행렬]")
-        pd.set_option('display.float_format', lambda x: '%.5f' % x)
-        df = pd.DataFrame(mh_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
-        df.index = [f'Det_{i}' for i in range(len(mh_matrix))]
-        print(df)
+        # print("\n[마할라노비스 거리 행렬]")
+        # pd.set_option('display.float_format', lambda x: '%.5f' % x)
+        # df = pd.DataFrame(mh_matrix, columns=[f'ID_{t.id}' for t in self.trackers])
+        # df.index = [f'Det_{i}' for i in range(len(mh_matrix))]
+        # print(df)
         
-        print("\n[최종 매칭 결과 상세]")
-        for m in matched:
-            det_idx, trk_idx = m
-            trk_id = self.trackers[trk_idx].id
-            print(f"검출 {det_idx} -> ID {trk_id} (임베딩: {emb_cost[det_idx, trk_idx]:.5f}, "
-                  f"IOU: {iou_matrix[det_idx, trk_idx]:.5f}, "
-                  f"마할라노비스: {mh_matrix[det_idx, trk_idx]:.5f})")
+        # print("\n[최종 매칭 결과 상세]")
+        # for m in matched:
+        #     det_idx, trk_idx = m
+        #     trk_id = self.trackers[trk_idx].id
+        #     print(f"검출 {det_idx} -> ID {trk_id} (임베딩: {emb_cost[det_idx, trk_idx]:.5f}, "
+        #           f"IOU: {iou_matrix[det_idx, trk_idx]:.5f}, "
+        #           f"마할라노비스: {mh_matrix[det_idx, trk_idx]:.5f})")
         
         print(f"\n{'='*50}")
         

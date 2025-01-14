@@ -1,11 +1,15 @@
 import sys
+import os
 import torch
 from yacs.config import CfgNode as CN
 import os.path as osp
 import math
 
-# Add TransReID-SSL path
-sys.path.append(osp.dirname(osp.dirname(osp.abspath(__file__))))
+# Add the project root to Python path
+project_root = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(project_root)
+sys.path.append(os.path.join(project_root, 'tracker', 'TransReID_SSL', 'transreid_pytorch'))
+
 from tracker.TransReID_SSL.transreid_pytorch.model.make_model import make_model
 
 def get_default_config():
@@ -137,3 +141,32 @@ def main():
     
 if __name__ == '__main__':
     main()
+
+from tracker.embedding import EmbeddingComputer
+import torch
+
+def test_vit_ssl_market():
+    # EmbeddingComputer 인스턴스 생성
+    embedder = EmbeddingComputer(
+        model_type='VIT_SSL_MARKET',
+        device='cuda' if torch.cuda.is_available() else 'cpu'
+    )
+    
+    # 모델 초기화
+    embedder.initialize_model()
+    
+    print("Model loaded successfully!")
+    
+    # 테스트 이미지로 추론 테스트
+    dummy_input = torch.randn(1, 3, 384, 384).to(embedder.device)
+    with torch.no_grad():
+        features = embedder.model.forward_features(dummy_input, None, None)
+        if isinstance(features, tuple):
+            print("\nFeature shapes:")
+            for i, feat in enumerate(features):
+                print(f"Feature {i}: {feat.shape}")
+        else:
+            print(f"\nFeature shape: {features.shape}")
+
+if __name__ == "__main__":
+    test_vit_ssl_market()

@@ -5,6 +5,9 @@ import os
 import pickle
 
 import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import math
 import cv2
 import torchvision
 import numpy as np
@@ -12,9 +15,7 @@ import torchvision.transforms as T
 from .TransReID_SSL.transreid_pytorch.model.backbones.vit_pytorch import vit_base_patch16_224_TransReID as VIT_EXTEND
 from dataclasses import dataclass
 from typing import List, Tuple, Optional
-import torch.nn.functional as F
 import torchinfo
-import math
 import torch
 import torch.nn as nn
 
@@ -62,6 +63,23 @@ class EmbeddingComputer:
                 T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
             ])
             
+        elif config.model_name =='VIT-B/16+ICS_SSL':
+            self.crop_size = (256 , 128)
+            self.transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize(self.crop_size),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
+        
+        elif config.model_name == 'VIT_SSL_MARKET':
+            self.crop_size = (384, 128)
+            self.transform = T.Compose([
+                T.ToPILImage(),
+                T.Resize(self.crop_size),
+                T.ToTensor(),
+                T.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+            ])
             
         else:
             self.crop_size = (384, 384)
@@ -140,11 +158,13 @@ class EmbeddingComputer:
                     # forward에서 이미 정규화된 결합 특징을 반환
                     batch_embeddings = self.model(batch_input, rgb_stats_batch)
                     
-                elif self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론
+                elif self.model_type == 'CLIP': # CLIP 전용 forward 추론 -> image만을 가지고 추론 VIT사용
                     image_features = self.model.encode_image(batch_input) # CLIP 는 3가지 특징맵을 반환함
-                    batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 211, 768]
+                    batch_embeddings = image_features[-1] # 마지막 사용 # [1 , 197, 512]
                     batch_embeddings = batch_embeddings[-1][0 : ]  # [batch_size , token , embeddding]
-                
+                    print("CLIP BATCH EMBEDDINGS SHAPE : ", batch_embeddings.shape)
+
+                    
                 elif self.model_type == 'La_Transformer':
                     batch_embeddings = self.model(batch_input)  # [1, 14, 768]
                     # 모든 부분 특징의 평균을 계산하여 하나의 특징 벡터로 만듦
@@ -157,6 +177,11 @@ class EmbeddingComputer:
                 
                 elif self.model_type == 'swinv2' or self.model_type == 'convNext': # SWINV2 , CONVNEXT
                     batch_embeddings = self.model(batch_input)  # swinV2 [1 1536] convnext [1 2048] La Transformer [1, 14, 768]
+                    
+                
+                elif self.model_type == 'VIT-B/16+ICS_SSL' or self.model_type == 'VIT_SSL_MARKET':
+                    batch_embeddings = self.model(batch_input)  # [1 ,768] local 특징만 사용
+        
         
             # GPU에서 정규화 수행 후 CPU로 이동
             batch_embeddings = F.normalize(batch_embeddings, p=2, dim=1)
@@ -487,7 +512,6 @@ class EmbeddingComputer:
         if self.model_type =='VIT-B/16+ICS_SSL':
             print("TransReID-SSL VIT-Base+ICS model loading...")
             
-            # 패치 크기는 16x16으로 고정 (vit_base_patch16_224_TransReID에서 하드코딩)
             self.model = VIT_EXTEND(
                 img_size = (256, 128),         # 16x8 패치 구조를 위한 크기
                 stride_size=16,                # 패치 크기는 16x16으로 고정
@@ -498,8 +522,8 @@ class EmbeddingComputer:
                 view=0,                        # SIE 비활성화
                 sie_xishu=0.0,                # SIE 완전 비활성화
                 local_feature=False,            # 중간 feature map 사용
-                gem_pool=False,               # Global average pooling 사용 안함
-                stem_conv=True,               # Stem convolution 사용
+                gem_pool = True,               # Global average pooling 사용 안함
+                stem_conv = True,               # Stem convolution 사용
                 num_classes=0                 # FC layer 제거
             )
             
@@ -550,6 +574,76 @@ class EmbeddingComputer:
             self.model.load_state_dict(filtered_state_dict, strict=False) 
             self.model.eval()
 
+        if self.model_type =='VIT_SSL_MARKET':
+            print("VIT_SSL_MARKET model loading SuperVised Reid...")
+
+            checkpoint = torch.load(f'{weight_path}', map_location=self.device)
+            
+            print("Checkpoint structure:")
+            for key, value in checkpoint.items():
+                if isinstance(value, torch.Tensor):
+                    print(f"{key}: {value.shape}")
+                else:
+                    print(f"{key}: {type(value)}")
+            
+            # 기본 모델 생성 - 가중치 파일에 맞게 설정
+            base = VIT_EXTEND(
+                img_size = (384, 128),         # stem_conv=True일 때 448x448 입력으로 14x14 패치 생성
+                stride_size=16,                # 기본 스트라이드
+                drop_path_rate=0.1,
+                camera=0,                      # SIE 비활성화
+                view=0,                        # SIE 비활성화
+                sie_xishu=0.0,                # SIE 완전 비활성화
+                local_feature = False,            # 중간 feature map 사용
+                gem_pool = True,              # Global average pooling 사용
+                stem_conv = True               # Stem convolution 사용
+            )
+            
+            print("model structure:")
+            print(base)
+            
+            # 전체 모델 구조 생성
+            class FullModel(torch.nn.Module):
+                def __init__(self, base):
+                    super().__init__()
+                    self.base = base
+                
+                def forward(self, x):
+                    return self.base(x)
+                
+                def forward_features(self, x, cam_label=None, view_label=None):
+                    return self.base.forward_features(x, cam_label, view_label)
+            
+            model = FullModel(base)
+            
+            print("\nModel configuration:")
+            print(f"- Architecture: ViT-Base (768 dim, 12 heads)")
+            print(f"- Input size: 384x128")
+            print(f"- Patch size: 8x8 (14x14 patches)")
+            print(f"- Local feature: Enabled (return intermediate features)")
+            print(f"- SIE: Disabled")
+            print(f"- STEM_CONV: Enabled")
+            
+            # Load weights
+            model.load_state_dict(checkpoint, strict=False)
+            model.eval()
+            
+            # Test with dummy input to check feature map shapes
+            model.to(self.device)
+            print("\nFeature map shapes:")
+            B = 1  # batch size
+            dummy_input = torch.randn(B, 3, 384, 128).to(self.device)  # 실제 입력 크기 사용
+            with torch.no_grad():
+                features = model.forward_features(dummy_input, None, None)
+                if isinstance(features, tuple):
+                    for i, feat in enumerate(features):
+                        print(f"Feature {i} shape: {feat.shape}")
+                else:
+                    print(f"Feature shape: {features.shape}")
+            
+            self.model = model
+            
+            self.model.eval()
 
     def preprocess_with_rgb_stats(self, batch_img):
         """
