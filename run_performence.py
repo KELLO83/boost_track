@@ -96,72 +96,6 @@ class VideoWriter:
             self.writer.release()
             print(f"Video saved to: {self.video_path}")
 
-def create_xml_annotation(img_path: str, img_shape: tuple, boxes: list, track_ids: list, save_path: str):
-    """Create XML annotation in PASCAL VOC format"""
-    import xml.etree.ElementTree as ET
-    from datetime import datetime
-    
-    root = ET.Element('annotation')
-    
-    # Add basic information
-    folder = ET.SubElement(root, 'folder')
-    folder.text = os.path.basename(os.path.dirname(img_path))
-    
-    filename = ET.SubElement(root, 'filename')
-    filename.text = os.path.basename(img_path)
-    
-    path = ET.SubElement(root, 'path')
-    path.text = img_path
-    
-    source = ET.SubElement(root, 'source')
-    database = ET.SubElement(source, 'database')
-    database.text = 'Unknown'
-    
-    # Add image size
-    size = ET.SubElement(root, 'size')
-    width = ET.SubElement(size, 'width')
-    height = ET.SubElement(size, 'height')
-    depth = ET.SubElement(size, 'depth')
-    width.text = str(img_shape[1])
-    height.text = str(img_shape[0])
-    depth.text = str(img_shape[2])
-    
-    segmented = ET.SubElement(root, 'segmented')
-    segmented.text = '0'
-    
-    # Add object information
-    for box, track_id in zip(boxes, track_ids):
-        obj = ET.SubElement(root, 'object')
-        
-        name = ET.SubElement(obj, 'name')
-        name.text = 'person'
-        
-        pose = ET.SubElement(obj, 'pose')
-        pose.text = 'Unspecified'
-        
-        truncated = ET.SubElement(obj, 'truncated')
-        truncated.text = '1'
-        
-        difficult = ET.SubElement(obj, 'difficult')
-        difficult.text = '0'
-        
-        # Convert center coordinates to bounding box
-        x, y, w, h = box
-        xmin = max(0, int(x - w/2))
-        ymin = max(0, int(y - h/2))
-        xmax = min(img_shape[1], int(x + w/2))
-        ymax = min(img_shape[0], int(y + h/2))
-        
-        bndbox = ET.SubElement(obj, 'bndbox')
-        ET.SubElement(bndbox, 'xmin').text = str(xmin)
-        ET.SubElement(bndbox, 'ymin').text = str(ymin)
-        ET.SubElement(bndbox, 'xmax').text = str(xmax)
-        ET.SubElement(bndbox, 'ymax').text = str(ymax)
-    
-    # Create XML tree and save
-    tree = ET.ElementTree(root)
-    tree.write(save_path, encoding='utf-8', xml_declaration=True)
-
 def process_yolo_detection(results) -> Optional[np.ndarray]:
     dets = []
     xywhs = []
@@ -213,7 +147,7 @@ def setup_tracker(args) -> BoostTrack:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="cam2_xml_format")
+    parser.add_argument("--img_path", type=str, default="data/cam2_labeld")
     parser.add_argument("--model_name", type=str, 
                        choices=['convNext', 'dinov2', 'swinv2', 'CLIP', 'CLIP_RGB',
                                'La_Transformer', 'CTL', 'VIT-B/16+ICS_SSL', 'VIT_SSL_MARKET'],
@@ -221,7 +155,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reid_model", type=str, default=None)
     parser.add_argument('--emb_method', type=str, default='default',
                        choices=['default', 'mean', 'enhanced_mean', 'enhanced_mean_V2'])
-    parser.add_argument('--visualize', action='store_true', default = False)
+    parser.add_argument('--visualize', action='store_true', default = True)
     parser.add_argument('--save_video', action='store_true', default = False)
     parser.add_argument('--save_frame', action='store_true', default = False)
     
@@ -281,7 +215,8 @@ def main():
             
         # YOLO detection
         results = model.predict(np_img, device='cuda', classes=[0], augment=True,
-                              iou=0.65, conf=0.55)
+                              iou=0.35, conf=0.55)
+        
         yolo_plot = results[0].plot()
         dets, xywhs = process_yolo_detection(results)
         
@@ -309,62 +244,6 @@ def main():
         
         
         
-        
-        #  # Save YOLO format labels (normalized xywh coordinates)
-        # if xywhs is not None:
-        #     img_height, img_width = np_img.shape[:2]
-        #     label_path = os.path.join(label_dir, f"{frame_id}.txt")
-        #     with open(label_path, 'w') as f:
-        #         # First check if we have valid tracking results
-        #         if tlwhs is not None and len(tlwhs) > 0 and ids is not None:
-        #             # Use tracking results
-        #             for i, xywh in enumerate(xywhs):
-        #                 # Convert absolute coordinates to normalized coordinates
-        #                 x, y, w, h = xywh
-        #                 x_norm = x / img_width
-        #                 y_norm = y / img_height
-        #                 w_norm = w / img_width
-        #                 h_norm = h / img_height
-                        
-        #                 # Use track_id from tracking results
-        #                 cls_id = int(ids[i]) if i < len(ids) else -1
-                        
-        #                 # Save in YOLO format: track_id/class x_center y_center width height
-        #                 f.write(f"{cls_id} {x_norm:.6f} {y_norm:.6f} {w_norm:.6f} {h_norm:.6f}\n")
-        #         else:
-        #             # Only YOLO detections available, no tracking
-        #             for xywh in xywhs:
-        #                 # Convert absolute coordinates to normalized coordinates
-        #                 x, y, w, h = xywh
-        #                 x_norm = x / img_width
-        #                 y_norm = y / img_height
-        #                 w_norm = w / img_width
-        #                 h_norm = h / img_height
-                        
-        #                 # No tracking ID available, use -1
-        #                 f.write(f"-1 {x_norm:.6f} {y_norm:.6f} {w_norm:.6f} {h_norm:.6f}\n")
-            
-        #     # Debug visualization: Load and draw saved labels
-        #     debug_img = np_img.copy()
-        #     with open(label_path, 'r') as f:
-        #         for line in f:
-        #             cls_id, x_norm, y_norm, w_norm, h_norm = map(float, line.strip().split())
-        #             # Convert normalized coordinates back to pixels
-        #             x = x_norm * img_width
-        #             y = y_norm * img_height
-        #             w = w_norm * img_width
-        #             h = h_norm * img_height
-        #             # Convert center coordinates to top-left and bottom-right
-        #             x1 = int(x - w/2)
-        #             y1 = int(y - h/2)
-        #             x2 = int(x + w/2)
-        #             y2 = int(y + h/2)
-        #             # Draw rectangle and label
-        #             cv2.rectangle(debug_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
-        #             label_text = f"Track ID: {int(cls_id)}" if cls_id > 0 else "-1"
-        #             cv2.putText(debug_img, label_text, (x1, y2),
-        #                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
-
           
 
         # Save XML annotation -> yolo 디텍션 결과
@@ -380,12 +259,9 @@ def main():
                 h = tlwh[3]  # height
                 boxes.append([x, y, w, h])
             track_ids = [int(id) for id in ids] if ids is not None else [-1] * len(tlwhs)
-            create_xml_annotation(img_path, np_img.shape, boxes, track_ids, xml_path)
-                
+  
         # Display results
         if vis_config.visualize:
-            # cv2.namedWindow('debug' , cv2.WINDOW_NORMAL)
-            # cv2.imshow("debug" , debug_img)
             cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
             cv2.imshow('yolo', yolo_plot)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
