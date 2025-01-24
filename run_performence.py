@@ -456,7 +456,7 @@ def match_detections_with_xml(box_mapping: Dict, xml_result: List) -> Dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="data/cam2_labeld")
+    parser.add_argument("--img_path", type=str, default="cam0_labeld/labels/xml_labels")
     parser.add_argument("--model_name", type=str, 
                        choices=['convNext', 'dinov2', 'swinv2', 'CLIP', 'CLIP_RGB',
                                'La_Transformer', 'CTL', 'VIT-B/16+ICS_SSL', 'VIT_SSL_MARKET'],
@@ -671,11 +671,11 @@ def main():
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
             cv2.imshow('Tracking', track_img)
             
-            # cv2.namedWindow('XML_GT', cv2.WINDOW_NORMAL)
-            # cv2.imshow('XML_GT', xml_vis)
+            cv2.namedWindow('XML_GT', cv2.WINDOW_NORMAL)
+            cv2.imshow('XML_GT', xml_vis)
             
-            # cv2.namedWindow('YOLO-XML Mapping', cv2.WINDOW_NORMAL)
-            # cv2.imshow('YOLO-XML Mapping', mapping_vis)
+            cv2.namedWindow('YOLO-XML Mapping', cv2.WINDOW_NORMAL)
+            cv2.imshow('YOLO-XML Mapping', mapping_vis)
             
             cv2.namedWindow('ID Switch Analysis', cv2.WINDOW_NORMAL)
             cv2.imshow('ID Switch Analysis', id_switch_vis)
