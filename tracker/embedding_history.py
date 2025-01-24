@@ -23,10 +23,10 @@ class EmbeddingHistory:
             trk_id = t.id
             if trk_id in self.current_embeddings:
                 trk_embs.append(self.current_embeddings[trk_id])
-                print(f"트래커 {trk_id}: 저장된 최신 임베딩 사용")
+                #print(f"트래커 {trk_id}: 저장된 최신 임베딩 사용")
             else:
                 trk_embs.append(t.get_emb())
-                print(f"트래커 {trk_id}: 트래커의 현재 임베딩 사용")
+                # print(f"트래커 {trk_id}: 트래커의 현재 임베딩 사용")
         
         trk_embs = np.array(trk_embs)  # shape: [M, D]
 

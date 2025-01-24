@@ -277,39 +277,39 @@ class BoostTrack(object):
             lambda_shape=self.lambda_shape
         )
         
-        print(f"\n{'='*50}")
-        print(f"프레임 {self.frame_count}")
-        print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
-        print(f"비활성 트래커 ID: {[t.id for t in self.inactive_trackers]}\n")
+        # print(f"\n{'='*50}")
+        # print(f"프레임 {self.frame_count}")
+        # print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
+        # print(f"비활성 트래커 ID: {[t.id for t in self.inactive_trackers]}\n")
         
-        if len(matched) > 0:
-            print("[매칭된 정보]")
-            print(f"검출-트래커 쌍: {matched}")
-            print(f"매칭된 트래커 ID: {[self.trackers[t].id for t in matched[:, 1]]}")
-            print("\n[검출 객체 -> 트래커 ID 매핑]")
-            for m in matched:
-                det_idx, trk_idx = m
-                trk_id = self.trackers[trk_idx].id
-                print(f"검출 {det_idx} -> ID {trk_id}")
-            print()
+        # if len(matched) > 0:
+        #     print("[매칭된 정보]")
+        #     print(f"검출-트래커 쌍: {matched}")
+        #     print(f"매칭된 트래커 ID: {[self.trackers[t].id for t in matched[:, 1]]}")
+        #     print("\n[검출 객체 -> 트래커 ID 매핑]")
+        #     for m in matched:
+        #         det_idx, trk_idx = m
+        #         trk_id = self.trackers[trk_idx].id
+        #         print(f"검출 {det_idx} -> ID {trk_id}")
+        #     print()
         
-        if len(unmatched_dets) > 0:
-            print(f"[매칭되지 않은 검출]: {unmatched_dets}\n")
+        # if len(unmatched_dets) > 0:
+        #     print(f"[매칭되지 않은 검출]: {unmatched_dets}\n")
         
-        if len(unmatched_trks) > 0:
-            print("[매칭되지 않은 트래커]")
-            print(f"인덱스: {unmatched_trks}")
-            print(f"트래커 ID: {[self.trackers[t].id for t in unmatched_trks]}\n")
+        # if len(unmatched_trks) > 0:
+        #     print("[매칭되지 않은 트래커]")
+        #     print(f"인덱스: {unmatched_trks}")
+        #     print(f"트래커 ID: {[self.trackers[t].id for t in unmatched_trks]}\n")
         
-        print("=== 상세 매칭 정보 ===\n")
-        print("[임베딩 유사도 행렬]")
-        if emb_cost is not None:
-            pd.set_option('display.float_format', lambda x: '%.5f' % x)
-            df = pd.DataFrame(emb_cost, columns=[f'ID_{t.id}' for t in self.trackers])
-            df.index = [f'Det_{i}' for i in range(len(emb_cost))]
-            print(df)
-        else:
-            print("임베딩 정보 없음")
+        # print("=== 상세 매칭 정보 ===\n")
+        # print("[임베딩 유사도 행렬]")
+        # if emb_cost is not None:
+        #     pd.set_option('display.float_format', lambda x: '%.5f' % x)
+        #     df = pd.DataFrame(emb_cost, columns=[f'ID_{t.id}' for t in self.trackers])
+        #     df.index = [f'Det_{i}' for i in range(len(emb_cost))]
+        #     print(df)
+        # else:
+        #     print("임베딩 정보 없음")
             
         # print("\n[IOU 행렬]")
         # pd.set_option('display.float_format', lambda x: '%.5f' % x)
@@ -331,7 +331,7 @@ class BoostTrack(object):
         #           f"IOU: {iou_matrix[det_idx, trk_idx]:.5f}, "
         #           f"마할라노비스: {mh_matrix[det_idx, trk_idx]:.5f})")
         
-        print(f"\n{'='*50}")
+        # print(f"\n{'='*50}")
         
         
         trust = (dets[:, 4] - self.det_thresh) / (1 - self.det_thresh)

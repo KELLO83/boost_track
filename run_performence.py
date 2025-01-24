@@ -1,18 +1,23 @@
+from optparse import NO_DEFAULT
 import os
 import cv2
 import numpy as np
 import torch
 import argparse
+from collections import deque
+from typing import Dict, List, Tuple
+from tqdm import tqdm
+from dataclasses import dataclass
+from ultralytics import YOLO
+from natsort import natsorted
+import xml.etree.ElementTree as ET
 from default_settings import GeneralSettings, BoostTrackConfig
 from tracker.boost_track import BoostTrack
 import utils
-from ultralytics import YOLO
-from tqdm import tqdm
-from natsort import natsorted
-from collections import deque
+from id_switch_analyzer import IDSwitchAnalyzer
+from typing import Dict, List, Tuple , Optional
 import random
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from collections import deque
 
 @dataclass
 class VisualizationConfig:
@@ -47,12 +52,30 @@ class Visualizer:
             self.id_colors[track_id] = [random.randint(150, 255) for _ in range(3)]
         return self.id_colors[track_id]
 
-    def draw_detection_boxes(self, image: np.ndarray, dets: np.ndarray) -> np.ndarray:
+    def draw_detection_boxes(self, image: np.ndarray, dets: np.ndarray, yolo_boxes: List = None, frame_mapping: Dict = None) -> np.ndarray:
         vis_img = image.copy()
-        for i, (x1, y1, x2, y2, conf) in enumerate(dets):
-            cv2.putText(vis_img, f"#{i}", (int(x2)-30, int(y1)+20),
-                      cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)
-        return vis_img
+
+        box_mapping = {}
+        for i, (x1, y1, x2, y2, conf) in enumerate(dets): # i는 yolo 탐지순서 
+            # YOLO 박스에 매핑된 트래킹 ID가 있는 경우
+            if frame_mapping is not None and i in frame_mapping:
+                track_id = frame_mapping[i]
+                color = self.get_id_color(track_id)
+                
+                
+                box_mapping.update({i: [track_id, x1, y1, x2, y2 , conf]}) # yolo탐지순서에 trackid와 박스 신뢰도값0
+                
+                # 박스 그리기
+                cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
+                # ID 텍스트 그리기
+                cv2.putText(vis_img, f"Y#{i}->T#{track_id}", (int(x1), int(y1)-10),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, color, 2)
+            else:
+                # 매핑되지 않은 YOLO 박스는 흰색으로 표시
+                cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 255, 255), 2)
+                cv2.putText(vis_img, f"Y#{i}", (int(x1), int(y1)-10),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+        return vis_img , box_mapping
 
     def draw_tracking_results(self, image: np.ndarray, tlwhs: List, ids: List[int]) -> Tuple[np.ndarray, List[int]]:
         vis_img = image.copy()
@@ -71,6 +94,130 @@ class Visualizer:
                         cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
                         
         return vis_img, track_id_list
+
+    def draw_xml_boxes(self, image: np.ndarray, xml_boxes: List , idx : int) -> np.ndarray:
+        """XML 파일의 박스와 ID를 시각화"""
+        vis_img = image.copy()
+        for name, xmin, ymin, xmax, ymax in xml_boxes:
+            # ID 추출 (name에서 숫자만)
+            try:
+                id_num = int(''.join(filter(str.isdigit, name)))
+                color = self.get_id_color(id_num)
+                # 박스 그리기
+                cv2.rectangle(vis_img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), color, 2)
+                # ID 텍스트 그리기
+                cv2.putText(vis_img, f"ID: {id_num}", (int(xmin), int(ymin)-10),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, color, 2)
+            except:
+                # ID를 추출할 수 없는 경우 흰색으로 표시
+                cv2.rectangle(vis_img, (int(xmin), int(ymin)), (int(xmax), int(ymax)), (255, 255, 255), 2)
+                cv2.putText(vis_img, name, (int(xmin), int(ymin)-10),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+
+        cv2.putText(vis_img, f"Frame: {idx}", (10, 30),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (255, 255, 255), 2)
+        return vis_img 
+
+    def generate_unique_color(self, label: str) -> Tuple[int, int, int]:
+        """
+        주어진 레이블에 대해 일관되고 고유한 색상을 생성합니다.
+        
+        Args:
+            label: 색상의 기준이 되는 레이블 문자열
+        
+        Returns:
+            RGB 색상 튜플
+        """
+        # 문자열 해시를 사용하여 일관된 색상 생성
+        hash_value = hash(label)
+        
+        # 색상 변형을 위한 파라미터 조정
+        r = (hash_value & 0xFF0000) >> 16
+        g = (hash_value & 0x00FF00) >> 8
+        b = hash_value & 0x0000FF
+        
+        # 너무 어둡거나 흐린 색상 방지
+        brightness = 0.299 * r + 0.587 * g + 0.114 * b
+        if brightness < 50:
+            r = min(r + 100, 255)
+            g = min(g + 100, 255)
+            b = min(b + 100, 255)
+        
+        return (int(r), int(g), int(b))
+
+    def visualize_yolo_xml_mapping(self, image: np.ndarray, yolo_boxes: List[List[float]], xml_file: str, yolo_label_mapping: Dict[int, str]) -> np.ndarray:
+        """
+        YOLO 박스와 XML 박스의 매핑 관계를 시각화합니다.
+        
+        Args:
+            image: 원본 이미지
+            yolo_boxes: YOLO 탐지 결과 박스 리스트 [x1, y1, x2, y2]
+            xml_file: XML 파일 경로
+            yolo_label_mapping: YOLO 인덱스와 XML 레이블 매핑 딕셔너리
+        
+        Returns:
+            np.ndarray: 매핑 관계가 시각화된 이미지
+        """
+        vis_img = image.copy()
+        xml_boxes = get_bboxes_from_xml(xml_file)
+        
+        # 색상 맵 생성 (매칭된 박스 쌍마다 고유한 색상 사용)
+        colors = {}
+        for xml_label in set(yolo_label_mapping.values()):
+            colors[xml_label] = self.generate_unique_color(xml_label)
+        
+        # YOLO 박스 그리기
+        for yolo_idx, yolo_box in enumerate(yolo_boxes):
+            if yolo_idx in yolo_label_mapping:
+                x1, y1, x2, y2 = map(int, yolo_box[:4])
+                xml_label = yolo_label_mapping[yolo_idx]
+                color = colors[xml_label]
+                
+                # YOLO 박스는 실선으로 그리기
+                cv2.rectangle(vis_img, (x1, y1), (x2, y2), color, 2)
+                
+                # YOLO 인덱스와 매칭된 XML 레이블 표시
+                label = f"YOLO_{yolo_idx}: {xml_label}"
+                cv2.putText(vis_img, label, (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                
+                # 매칭된 XML 박스 찾기
+                for xml_box in xml_boxes:
+                    xml_name = xml_box[0]
+                    if xml_name == xml_label:
+                        xml_x1, xml_y1, xml_x2, xml_y2 = map(int, xml_box[1:])
+                        
+                        # XML 박스는 점선으로 그리기
+                        for i in range(0, 360, 20):  # 점선 효과를 위한 작은 선분들
+                            start_angle = i
+                            end_angle = min(i + 10, 360)
+                            
+                            # 박스의 각 변을 점선으로 그리기
+                            # 상단 가로선
+                            cv2.line(vis_img, 
+                                   (int(xml_x1 + (xml_x2-xml_x1)*start_angle/360), xml_y1),
+                                   (int(xml_x1 + (xml_x2-xml_x1)*end_angle/360), xml_y1),
+                                   color, 2)
+                            # 하단 가로선
+                            cv2.line(vis_img,
+                                   (int(xml_x1 + (xml_x2-xml_x1)*start_angle/360), xml_y2),
+                                   (int(xml_x1 + (xml_x2-xml_x1)*end_angle/360), xml_y2),
+                                   color, 2)
+                            # 왼쪽 세로선
+                            cv2.line(vis_img,
+                                   (xml_x1, int(xml_y1 + (xml_y2-xml_y1)*start_angle/360)),
+                                   (xml_x1, int(xml_y1 + (xml_y2-xml_y1)*end_angle/360)),
+                                   color, 2)
+                            # 오른쪽 세로선
+                            cv2.line(vis_img,
+                                   (xml_x2, int(xml_y1 + (xml_y2-xml_y1)*start_angle/360)),
+                                   (xml_x2, int(xml_y1 + (xml_y2-xml_y1)*end_angle/360)),
+                                   color, 2)
+                        
+                        # XML 박스 레이블 표시
+                        label = f"XML: {xml_name}"
+                        cv2.putText(vis_img, label, (xml_x1, xml_y2+20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+        
+        return vis_img
 
 class VideoWriter:
     def __init__(self, save_dir: str, model_name: str, emb_method: str, video_name: str):
@@ -96,9 +243,10 @@ class VideoWriter:
             self.writer.release()
             print(f"Video saved to: {self.video_path}")
 
-def process_yolo_detection(results) -> Optional[np.ndarray]:
+def process_yolo_detection(results) -> Optional[Tuple[np.ndarray, np.ndarray, List[List]]]:
     dets = []
     xywhs = []
+    yolo_boxes = []  # 원본 YOLO 박스 정보 저장
     for result in results:
         boxes = result.boxes
         for i in range(len(boxes)):
@@ -114,8 +262,11 @@ def process_yolo_detection(results) -> Optional[np.ndarray]:
                 x_center = x1 + w/2
                 y_center = y1 + h/2
                 xywhs.append([x_center, y_center, w, h])
+                yolo_boxes.append([x1, y1, x2, y2, conf, i])  # detection index 추가
                 
-    return np.array(dets) if dets else None, np.array(xywhs) if xywhs else None
+    return (np.array(dets) if dets else None, 
+            np.array(xywhs) if xywhs else None,
+            yolo_boxes if yolo_boxes else None)
 
 def setup_tracker(args) -> BoostTrack:
     config = BoostTrackConfig(
@@ -143,6 +294,164 @@ def setup_tracker(args) -> BoostTrack:
         model_name=args.model_name
     )
     return BoostTrack(config)
+
+def get_bboxes_from_xml(xml_file):
+    """XML 파일에서 bounding box 정보 추출"""
+    tree = ET.parse(xml_file)
+    root = tree.getroot()
+    bboxes = []
+    
+    for obj in root.findall('.//object'):
+        name = obj.find('name').text
+        bbox = obj.find('bndbox')
+        if bbox is not None:
+            xmin = float(bbox.find('xmin').text)
+            ymin = float(bbox.find('ymin').text)
+            xmax = float(bbox.find('xmax').text)
+            ymax = float(bbox.find('ymax').text)
+            bboxes.append((name, xmin, ymin, xmax, ymax))
+    
+    return sorted(bboxes) 
+
+
+def map_yolo_to_xml_labels(yolo_boxes: List[List[float]], xml_file: str) -> Dict[int, str]:
+    """
+    YOLO 객체 탐지 결과와 XML 파일의 박스를 비교하여 IOU가 가장 높은 것을 매핑합니다.
+    
+    Args:
+        yolo_boxes: YOLO 탐지 결과 박스 리스트 [x1, y1, x2, y2]
+        xml_file: XML 파일 경로
+    
+    Returns:
+        Dict[int, str]: YOLO 탐지 순서를 키로, XML name 필드 값을 값으로 하는 딕셔너리
+    """
+    # XML 파일에서 박스 정보 추출
+    xml_boxes = get_bboxes_from_xml(xml_file)
+    
+    yolo_label_mapping = {}
+    
+    # 각 YOLO 박스에 대해
+    for yolo_idx, yolo_box in enumerate(yolo_boxes):
+        max_iou = 0
+        best_xml_name = None
+        
+        # 모든 XML 박스와 비교
+        for xml_box in xml_boxes:
+            # XML 박스 좌표와 이름 추출
+            x1, y1, x2, y2 = xml_box[1:]
+            xml_name = xml_box[0]
+            
+            # IOU 계산
+            iou = calculate_iou(yolo_box, [x1, y1, x2, y2])
+            
+            # 현재까지의 최대 IOU보다 크면 업데이트
+            if iou > max_iou:
+                max_iou = iou
+                best_xml_name = xml_name
+        
+        # IOU가 임계값(예: 0.5) 이상인 경우에만 매핑
+        if max_iou >= 0.5 and best_xml_name is not None:
+            yolo_label_mapping[yolo_idx] = best_xml_name
+    
+    return yolo_label_mapping
+
+def calculate_iou(box1, box2):
+    """
+    두 박스 간의 IoU(Intersection over Union)를 계산
+    box 형식: [x1, y1, x2, y2]
+    """
+
+    # 박스 좌표 추출 (4개 또는 5개 요소 지원)
+    x1_1, y1_1, x2_1, y2_1 = box1[:4]
+    x1_2, y1_2, x2_2, y2_2 = box2[:4]
+    
+    # 교집합 영역 계산
+    x1_i = max(x1_1, x1_2)
+    y1_i = max(y1_1, y1_2)
+    x2_i = min(x2_1, x2_2)
+    y2_i = min(y2_1, y2_2)
+    
+    # 교집합이 없는 경우
+    if x2_i < x1_i or y2_i < y1_i:
+        return 0.0
+    
+    # 교집합 영역
+    intersection = (x2_i - x1_i) * (y2_i - y1_i)
+    
+    # 각 박스의 영역
+    area1 = (x2_1 - x1_1) * (y2_1 - y1_1)
+    area2 = (x2_2 - x1_2) * (y2_2 - y1_2)
+    
+    # 합집합 영역
+    union = area1 + area2 - intersection
+    
+    # IoU 계산
+    iou = intersection / union if union > 0 else 0.0
+    
+    return iou
+
+def match_detections_with_xml(box_mapping: Dict, xml_result: List) -> Dict:
+    """
+    YOLO 탐지 순서와 XML ID 간의 매핑을 분석
+    
+    Args:
+    - box_mapping: YOLO 탐지 순서와 트래킹 ID 매핑
+    - xml_result: XML에서 추출한 박스 정보
+    
+    Returns:
+    - 매핑 결과 딕셔너리
+      {
+        'yolo_to_tracking': {yolo_idx: tracking_id},
+        'yolo_to_xml': {yolo_idx: xml_id},
+        'tracking_to_xml': {tracking_id: xml_id}
+      }
+    """
+    # XML ID 추출 (name에서 숫자 추출)
+    xml_id_mapping = {}
+    for idx, (name, xmin, ymin, xmax, ymax) in enumerate(xml_result):
+        try:
+            xml_id = int(''.join(filter(str.isdigit, name)))
+            xml_id_mapping[idx] = xml_id
+        except:
+            # ID를 추출할 수 없는 경우 스킵
+            pass
+    
+    # IoU를 사용하여 YOLO 박스와 XML 박스 매핑
+    yolo_to_xml = {}
+    for yolo_idx, (track_info) in box_mapping.items():
+        tracking_id, x1, y1, x2, y2, conf = track_info
+        yolo_box = [x1, y1, x2, y2]
+        
+        best_iou = 0
+        best_xml_idx = None
+        for xml_idx, (name, xmin, ymin, xmax, ymax) in enumerate(xml_result):
+            xml_box = [xmin, ymin, xmax, ymax]
+            iou = calculate_iou(yolo_box, xml_box)
+            
+            if iou > best_iou:
+                best_iou = iou
+                best_xml_idx = xml_idx
+        
+        # IOU 임계값 설정 (예: 0.5 이상일 때만 매핑)
+        if best_iou >= 0.5:
+            yolo_to_xml[yolo_idx] = best_xml_idx
+    
+    # 최종 매핑 결과 생성
+    mapping_result = {
+        'yolo_to_tracking': {k: v[0] for k, v in box_mapping.items()},
+        'yolo_to_xml': yolo_to_xml,
+        'tracking_to_xml': {}
+    }
+    
+    # tracking_to_xml 매핑 추가
+    for yolo_idx, tracking_id in mapping_result['yolo_to_tracking'].items():
+        if yolo_idx in mapping_result['yolo_to_xml']:
+            xml_idx = mapping_result['yolo_to_xml'][yolo_idx]
+            if xml_idx in xml_id_mapping:
+                mapping_result['tracking_to_xml'][tracking_id] = xml_id_mapping[xml_idx]
+    
+    return mapping_result
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
@@ -178,6 +487,7 @@ def main():
     model = YOLO(args.yolo_model)
     tracker = setup_tracker(args)
     visualizer = Visualizer()
+    id_switch_analyzer = IDSwitchAnalyzer()  # ID Switch 분석기 초기화
     vis_config = VisualizationConfig(
         visualize=args.visualize,
         save_video=args.save_video,
@@ -191,22 +501,43 @@ def main():
     save_dir = f'{args.model_name}_{cam_name}_view'
     model_name = ModelConfig.get_model_name(args.reid_model)
     
-    label_dir = f'yolo_detection_xml_format/{cam_name}'
-    print(f"Saving to: {save_dir}")
-    
-    # Create label directory
-    os.makedirs(label_dir, exist_ok=True)
-    
     # Initialize video writer if needed
     video_writer = VideoWriter(save_dir, model_name, args.emb_method, os.path.basename(args.img_path)) if args.save_video else None
     
     # Process images
-    img_list = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
-    deque_list = deque(maxlen=3)
+    img_files = natsorted([f for f in os.listdir(args.img_path) if f.endswith(('.jpg', '.png', '.jpeg'))])
+    xml_files = natsorted([f for f in os.listdir(args.img_path) if f.endswith('.xml')])
     
-    for idx, img_name in enumerate(tqdm(img_list)):
-        frame_id = int(os.path.splitext(img_name)[0])
+    # 이미지와 XML 파일 쌍 매칭
+    valid_pairs = []
+    for img_file in img_files:
+        base_name = os.path.splitext(img_file)[0]
+        xml_file = f"{base_name}.xml"
+        not_found_list = []
+        if xml_file in xml_files:
+            valid_pairs.append((img_file, xml_file))
+        else:
+            not_found_list.append(img_file)
+    
+    print(f"Total image files: {len(img_files)}")
+    print(f"Total XML files: {len(xml_files)}")
+    print(f"Valid pairs found: {len(valid_pairs)}")
+    print(f"Files not found: {not_found_list}")
+    
+    before_image_list = deque(maxlen=3)
+    yolo_track_mapping = {}  # YOLO detection과 track ID 매핑을 저장할 딕셔너리
+    
+    yolo_label_mapping  = {}
+    
+    after_track_image = None
+    before_track_image = None
+    
+    previous_track_images = deque(maxlen=3)
+    
+    for idx, (img_name, xml_name) in enumerate(tqdm(valid_pairs)):
+        frame_id = int(os.path.splitext(img_name)[0]) # 이미지 파일명
         img_path = os.path.join(args.img_path, img_name)
+        xml_path = os.path.join(args.img_path, xml_name)
         
         # Read and process image
         np_img = cv2.imread(img_path)
@@ -217,8 +548,20 @@ def main():
         results = model.predict(np_img, device='cuda', classes=[0], augment=True,
                               iou=0.35, conf=0.55)
         
+        # YOLO plot에 detection 번호 추가
         yolo_plot = results[0].plot()
-        dets, xywhs = process_yolo_detection(results)
+        boxes = results[0].boxes
+        for i in range(len(boxes)):
+            if boxes.cls[i].cpu().numpy() == 0:  # person class only
+                x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy()
+                # 박스 왼쪽 상단에 번호 표시
+                cv2.putText(yolo_plot, f"#{i}", (int(x1), int(y1)-10),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)
+            
+        cv2.putText(yolo_plot, f"Frame: {idx} ({img_name})", (10, 30),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)        
+        
+        dets, xywhs, yolo_boxes = process_yolo_detection(results)
         
         if dets is None or len(dets) == 0:
             continue
@@ -226,7 +569,7 @@ def main():
     
         
         # Add detection numbers
-        yolo_plot = visualizer.draw_detection_boxes(yolo_plot, dets)
+        # yolo_plot = visualizer.draw_detection_boxes(yolo_plot, dets)
         
         # Prepare image for tracking
         img_rgb = cv2.cvtColor(np_img, cv2.COLOR_BGR2RGB)
@@ -239,50 +582,130 @@ def main():
                                                GeneralSettings['aspect_ratio_thresh'],
                                                GeneralSettings['min_box_area'])
         
+        
+        # YOLO detection과 track ID 매핑
+        frame_mapping = {}
+        if yolo_boxes is not None and ids is not None:
+            for yolo_box in yolo_boxes:
+                det_idx = yolo_box[5]  # YOLO detection index
+                # 가장 높은 IoU를 가진 tracking box 찾기
+                max_iou = 0
+                matched_id = None
+                for tlwh, track_id in zip(tlwhs, ids):
+                    x1, y1 = tlwh[0], tlwh[1]
+                    x2, y2 = x1 + tlwh[2], y1 + tlwh[3]
+                    track_box = [x1, y1, x2, y2]
+                    iou = calculate_iou(yolo_box[:4], track_box)
+                    if iou > max_iou:
+                        max_iou = iou
+                        matched_id = track_id
+                if matched_id is not None:
+                    frame_mapping[det_idx] = matched_id
+            
+            # YOLO 박스와 매핑된 트래킹 ID 시각화
+            yolo_tracking_id, box_mapping = visualizer.draw_detection_boxes(np_img, dets, yolo_boxes, frame_mapping)
+            
         # Visualize tracking results
-        vis_img, track_id_list = visualizer.draw_tracking_results(np_img, tlwhs, ids)
-        
-        
-        
-          
+        track_img, track_id_list = visualizer.draw_tracking_results(np_img, tlwhs, ids)
+    
 
-        # Save XML annotation -> yolo 디텍션 결과
-        if tlwhs is not None and len(xywhs) > 0:
-            xml_path = os.path.join(label_dir, f"{frame_id}.xml")
-            img_path = os.path.join(os.path.dirname(label_dir), args.img_path, f"{frame_id}.jpg")
-            # Convert tlwh to center format (xywh)
-            boxes = []
-            for tlwh in tlwhs:
-                x = tlwh[0] + tlwh[2]/2  # center x
-                y = tlwh[1] + tlwh[3]/2  # center y
-                w = tlwh[2]  # width
-                h = tlwh[3]  # height
-                boxes.append([x, y, w, h])
-            track_ids = [int(id) for id in ids] if ids is not None else [-1] * len(tlwhs)
-  
+      
+      
+        # xml
+        
+        xml_result = get_bboxes_from_xml(xml_path)
+        xml_vis = visualizer.draw_xml_boxes(np_img, xml_result , idx)
+        
+        # 매핑 분석
+        mapping_analysis = match_detections_with_xml(box_mapping, xml_result)
+        
+        # # 매핑 결과 출력
+        print("\n=== Mapping Analysis ===")
+        # print("YOLO to Tracking ID:", mapping_analysis['yolo_to_tracking'])
+        # print("YOLO to XML ID:", mapping_analysis['yolo_to_xml'])
+        # print("Tracking ID to XML ID:", mapping_analysis['tracking_to_xml'])
+        
+        # YOLO 객체 탐지 순서와 XML 박스를 매핑
+        yolo_label_mapping = map_yolo_to_xml_labels(yolo_boxes, xml_path)
+        
+        # YOLO 바운딩 박스 매핑 생성
+        yolo_bbox_mapping = {}
+        for i, box in enumerate(yolo_boxes):
+            x1, y1, x2, y2 = box[:4]  # box는 [x1, y1, x2, y2, conf, det_idx] 형식
+            yolo_bbox_mapping[int(box[5])] = (float(x1), float(y1), float(x2), float(y2))
+        
+        # ID Switch 분석 업데이트
+        switch_analysis = id_switch_analyzer.update(
+            frame_id=frame_id,
+            yolo_track_mapping=frame_mapping,  # frame_mapping을 직접 전달
+            yolo_label_mapping=yolo_label_mapping,
+            yolo_bbox_mapping=yolo_bbox_mapping
+        )
+        
+        # 현재 프레임에서 ID switch가 발생했다면 출력
+        if switch_analysis['current_switches']:
+            print(f"\nFrame {frame_id}: ID Switches detected:")
+            for switch in switch_analysis['current_switches']:
+                print(f"  Ground Truth {switch['xml_id']}: Track ID changed from {switch['old_track_id']} to {switch['new_track_id']}")
+                if switch['frames_since_last'] > 0:
+                    print(f"    After {switch['frames_since_last']} frames from last appearance")
+        
+        # ID Switch 분석 시각화
+        id_switch_vis, previous_track_images = id_switch_analyzer.visualize_id_switches(
+            image = np_img.copy(),
+            switches = switch_analysis['current_switches'],
+            current_mappings=switch_analysis['frame_mappings'],
+            frame_id = frame_id,
+            track_img = track_img  # 바운딩 박스와 ID가 표시된 이미지 전달
+        )
+        
+        # YOLO와 XML 매핑 시각화
+        mapping_vis = visualizer.visualize_yolo_xml_mapping(np_img.copy(), yolo_boxes, xml_path, yolo_label_mapping)
+        
         # Display results
         if vis_config.visualize:
-            cv2.namedWindow('yolo', cv2.WINDOW_NORMAL)
-            cv2.imshow('yolo', yolo_plot)
+            # cv2.namedWindow('yolo_plot', cv2.WINDOW_NORMAL)
+            # cv2.imshow('yolo_plot', yolo_plot)
+            # cv2.namedWindow('yolo_tracking_id', cv2.WINDOW_NORMAL)
+            # cv2.imshow('yolo_tracking_id', yolo_tracking_id)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
-            cv2.imshow('Tracking', vis_img)
-            if cv2.waitKey(0) & 0xFF == ord('q'):
-                break
-        
-        # Save frame if needed
-        if idx in vis_config.stop_frame_ids and vis_config.save_frame:
-            cv2.imwrite(os.path.join(save_dir, f'{idx}.jpg'), vis_img)
-        
-        deque_list.append(vis_img)
-        print("track id list:", sorted(track_id_list))
-        
+            cv2.imshow('Tracking', track_img)
+            
+            # cv2.namedWindow('XML_GT', cv2.WINDOW_NORMAL)
+            # cv2.imshow('XML_GT', xml_vis)
+            
+            # cv2.namedWindow('YOLO-XML Mapping', cv2.WINDOW_NORMAL)
+            # cv2.imshow('YOLO-XML Mapping', mapping_vis)
+            
+            cv2.namedWindow('ID Switch Analysis', cv2.WINDOW_NORMAL)
+            cv2.imshow('ID Switch Analysis', id_switch_vis)
+            
+            # 이전 tracking 이미지 표시
+            prev_window_names = []  # 이전 tracking 이미지 창 이름 저장
+            for i, prev_img_info in enumerate(previous_track_images):
+                window_name = f"Previous Track (Frame {prev_img_info['frame_id']}, XML ID: {prev_img_info['xml_id']}, Track ID: {prev_img_info['track_id']})"
+                prev_window_names.append(window_name)
+                cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+                cv2.imshow(window_name, prev_img_info['image'])
+            
+            cv2.waitKey(0)
+            
+            # 이전 tracking 이미지 창들만 닫기
+            for window_name in prev_window_names:
+                cv2.destroyWindow(window_name)
+
+            
         # Write video frame
         if video_writer is not None:
-            video_writer.write(vis_img)
-    
+            video_writer.write(track_img)
+        
+ 
     # Cleanup
     if video_writer is not None:
         video_writer.release()
+        
+    # 분석 결과 출력
+    id_switch_analyzer.print_summary()
 
 if __name__ == "__main__":
     main()
