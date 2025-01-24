@@ -132,53 +132,49 @@ class IDSwitchAnalyzer:
                 self.label_appearances[xml_id] = []
             self.label_appearances[xml_id].append(frame_id)
             
-            # 새로운 객체 첫 등장
-            if xml_id not in self.label_to_current_track_id:
+            # XML 레이블을 통해 객체 존재 확인
+            if xml_id in self.label_to_current_track_id:
+                # 객체가 존재하고 현재 track_id가 다르다면 ID switch 발생
+                current_track_id = self.label_to_current_track_id[xml_id]
+                if track_id != current_track_id:
+                    frames_since_last = frame_id - self.label_appearances[xml_id][-2] if len(self.label_appearances[xml_id]) > 1 else 0
+                    
+                    # ID switch 기록
+                    switch_info = {
+                        'frame_id': frame_id,
+                        'xml_id': xml_id,
+                        'old_track_id': current_track_id,
+                        'new_track_id': track_id,
+                        'frames_since_last': frames_since_last,
+                        'total_switches': len(self.id_switches[xml_id]) + 1,
+                        'iou': self.calculate_iou(self.label_to_recent_bbox[xml_id], bbox)
+                    }
+                    self.id_switches[xml_id].append(switch_info)
+                    current_switches.append(switch_info)
+                    self.total_switches += 1
+                    print(f"ID Switch detected:")
+                    print(f"  Ground Truth(XML ID): {xml_id}")
+                    print(f"  Track ID changed: {current_track_id} -> {track_id}")
+                    print(f"  Frames since last: {frames_since_last}")
+                    print(f"  Total switches: {switch_info['total_switches']}")
+                    print(f"  IoU with previous bbox: {switch_info['iou']}")
+                    
+                    # 이전 track_id의 매핑 제거
+                    if current_track_id in self.track_to_xml_mapping:
+                        del self.track_to_xml_mapping[current_track_id]
+                
+                # 새로운 track_id로 매핑 업데이트
+                self.track_to_xml_mapping[track_id] = xml_id
+                self.label_to_current_track_id[xml_id] = track_id
+                self.label_to_recent_bbox[xml_id] = bbox
+            else:
+                # 새로운 객체 첫 등장
                 print(f"New object detected - XML ID: {xml_id}, Track ID: {track_id}")
                 self.label_to_first_track_id[xml_id] = track_id
                 self.label_to_current_track_id[xml_id] = track_id
                 self.id_switches[xml_id] = []
                 self.label_to_recent_bbox[xml_id] = bbox
                 self.track_to_xml_mapping[track_id] = xml_id
-                
-            # ID switch 감지
-            elif track_id != self.label_to_current_track_id[xml_id]:
-                # 현재 track_id가 다른 xml_id와 매핑되어 있는지 확인
-                if track_id in self.track_to_xml_mapping and self.track_to_xml_mapping[track_id] == xml_id:
-                    print(f"Skipping ID switch - Track ID {track_id} is already mapped to XML ID {xml_id}")
-                    continue
-                
-                frames_since_last = frame_id - self.label_appearances[xml_id][-2] if len(self.label_appearances[xml_id]) > 1 else 0
-                
-                # ID switch 기록
-                switch_info = {
-                    'frame_id': frame_id,
-                    'xml_id': xml_id,
-                    'old_track_id': self.label_to_current_track_id[xml_id],
-                    'new_track_id': track_id,
-                    'frames_since_last': frames_since_last,
-                    'total_switches': len(self.id_switches[xml_id]) + 1,
-                    'iou': self.calculate_iou(self.label_to_recent_bbox[xml_id], bbox)
-                }
-                self.id_switches[xml_id].append(switch_info)
-                current_switches.append(switch_info)
-                self.total_switches += 1
-                print(f"ID Switch detected:")
-                print(f"  Ground Truth(XML ID): {xml_id}")
-                print(f"  Track ID changed: {self.label_to_current_track_id[xml_id]} -> {track_id}")
-                print(f"  Frames since last: {frames_since_last}")
-                print(f"  Total switches: {switch_info['total_switches']}")
-                print(f"  IoU with previous bbox: {switch_info['iou']}")
-                
-                # 이전 track_id의 매핑 제거
-                old_track_id = self.label_to_current_track_id[xml_id]
-                if old_track_id in self.track_to_xml_mapping:
-                    del self.track_to_xml_mapping[old_track_id]
-                
-                # 새로운 track_id 매핑 업데이트
-                self.track_to_xml_mapping[track_id] = xml_id
-                self.label_to_current_track_id[xml_id] = track_id
-                self.label_to_recent_bbox[xml_id] = bbox
         
         # 프레임 이력 저장
         self.frame_history[frame_id] = frame_mappings
