@@ -55,12 +55,30 @@ class IDSwitchAnalyzer:
         current_switches = []
         frame_mappings = {}
 
+        # 1단계: 현재 tracking 중인 객체들의 xml_id 매핑 확인
+        current_track_to_xml = {}
+        for xml_id, track_id in self.label_to_current_track_id.items():
+            current_track_to_xml[track_id] = xml_id
+
         xml_id_detections = defaultdict(list)
+        # 2단계: YOLO 탐지와 tracking box 매칭 시 IOU 체크
         for yolo_idx in yolo_track_mapping:
             if yolo_idx in yolo_label_mapping and yolo_idx in yolo_bbox_mapping:
                 track_id = yolo_track_mapping[yolo_idx]
                 xml_id = yolo_label_mapping[yolo_idx]
                 bbox = yolo_bbox_mapping[yolo_idx]
+                
+                # tracking box가 있는 경우, 해당 box와의 IOU 체크
+                if track_id in current_track_to_xml:
+                    current_xml = current_track_to_xml[track_id]
+                    if current_xml != xml_id:  # 다른 xml_id와 매칭되려고 할 때
+                        if current_xml in self.label_to_recent_bbox:
+                            iou = self.calculate_iou(self.label_to_recent_bbox[current_xml], bbox)
+                            if iou < 0.8:  # IOU가 낮으면 매칭하지 않음
+                                print(' ========================================================= ')
+                                print(f"Warning: YOLO label {xml_id} trying to match with track_id {track_id} (current xml_id: {current_xml}) but IOU too low: {iou}")
+                                continue
+                
                 xml_id_detections[xml_id].append({
                     'track_id': track_id,
                     'bbox': bbox,
@@ -90,13 +108,14 @@ class IDSwitchAnalyzer:
                 self.label_appearances[xml_id] = []
             self.label_appearances[xml_id].append(frame_id)
 
-            # Handle track_id conflict: Check if this track_id was assigned to another XML ID
+            # Handle track_id conflict with stricter IOU check
             prev_xml_id = self.track_to_xml_mapping.get(track_id)
             if prev_xml_id is not None and prev_xml_id != xml_id:
-                # Invalidate previous XML ID's current track_id
-                if self.label_to_current_track_id.get(prev_xml_id) == track_id:
-                    del self.label_to_current_track_id[prev_xml_id]
-                    print(f"Track ID {track_id} was reassigned from XML ID {prev_xml_id} to {xml_id}. Invalidated previous mapping.")
+                if prev_xml_id in self.label_to_recent_bbox:
+                    iou = self.calculate_iou(self.label_to_recent_bbox[prev_xml_id], bbox)
+                    if iou < 0.5:  # IOU가 낮으면 재할당하지 않음
+                        print(f"Prevented ID reassignment: Track ID {track_id} from XML {prev_xml_id} to {xml_id} (IOU: {iou})")
+                        continue
 
             if xml_id in self.label_to_current_track_id:
                 current_track_id = self.label_to_current_track_id.get(xml_id)

@@ -87,11 +87,13 @@ class Visualizer:
             x2, y2 = x1 + w, y1 + h
             color = self.get_id_color(track_id)
             
+            mid_x , mid_y = x1 + w/2 , y1 + h/2
+            
             if track_id not in track_id_list:
                 track_id_list.append(int(track_id))
                 
             cv2.rectangle(vis_img, (int(x1), int(y1)), (int(x2), int(y2)), color, 2)
-            cv2.putText(vis_img, f"ID: {track_id}", (int(x1), int(y1)-10),
+            cv2.putText(vis_img, f"ID: {track_id}", (int(mid_x), int(mid_y)),
                         cv2.FONT_HERSHEY_DUPLEX, 0.9, color, 2)
                         
         return vis_img, track_id_list
@@ -274,9 +276,9 @@ def setup_tracker(args) -> BoostTrack:
         reid_model_path=f'external/weights/{args.reid_model}',
         device='cuda',
         max_age=15,
-        min_hits=3,
-        det_thresh=0.4,
-        iou_threshold=0.9,
+        min_hits=0,
+        det_thresh=0.55, # 탐지 신뢰도 임계값
+        iou_threshold=0.65,
         emb_sim_score=0.60,
         lambda_iou=0.05,
         lambda_mhd=0.25,
@@ -547,7 +549,7 @@ def main():
             
         # YOLO detection
         results = model.predict(np_img, device='cuda', classes=[0], augment=True,
-                              iou=0.35, conf=0.55)
+                              iou=0.65, conf=0.55)
         
         # YOLO plot에 detection 번호 추가
         yolo_plot = results[0].plot()
@@ -668,10 +670,10 @@ def main():
         
         # Display results
         if vis_config.visualize:
-            # cv2.namedWindow('yolo_plot', cv2.WINDOW_NORMAL)
-            # cv2.imshow('yolo_plot', yolo_plot)
-            # cv2.namedWindow('yolo_tracking_id', cv2.WINDOW_NORMAL)
-            # cv2.imshow('yolo_tracking_id', yolo_tracking_id)
+            cv2.namedWindow('yolo_plot', cv2.WINDOW_NORMAL)
+            cv2.imshow('yolo_plot', yolo_plot)
+            cv2.namedWindow('yolo_tracking_id', cv2.WINDOW_NORMAL)
+            cv2.imshow('yolo_tracking_id', yolo_tracking_id)
             cv2.namedWindow('Tracking', cv2.WINDOW_NORMAL)
             cv2.imshow('Tracking', track_img)
             
