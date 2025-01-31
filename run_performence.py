@@ -14,7 +14,8 @@ import xml.etree.ElementTree as ET
 from default_settings import GeneralSettings, BoostTrackConfig
 from tracker.boost_track import BoostTrack
 import utils
-from id_switch_analyzer import IDSwitchAnalyzer
+#from id_switch_analyzer import IDSwitchAnalyzer
+from id_switch_analyzer2 import IDSwitchAnalyzer
 from typing import Dict, List, Tuple , Optional
 import random
 from collections import deque
@@ -456,7 +457,7 @@ def match_detections_with_xml(box_mapping: Dict, xml_result: List) -> Dict:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("BoostTrack for image sequence")
     parser.add_argument("--yolo_model", type=str, default="yolo11x.pt")
-    parser.add_argument("--img_path", type=str, default="cam0_labeld/labels/xml_labels")
+    parser.add_argument("--img_path", type=str, default="data/cam2_labeld")
     parser.add_argument("--model_name", type=str, 
                        choices=['convNext', 'dinov2', 'swinv2', 'CLIP', 'CLIP_RGB',
                                'La_Transformer', 'CTL', 'VIT-B/16+ICS_SSL', 'VIT_SSL_MARKET'],
@@ -658,6 +659,9 @@ def main():
             frame_id = frame_id,
             track_img = track_img  # 바운딩 박스와 ID가 표시된 이미지 전달
         )
+        
+        cv2.putText(track_img, f"Frame: {frame_id}", (10, 30),
+                          cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)
         
         # YOLO와 XML 매핑 시각화
         mapping_vis = visualizer.visualize_yolo_xml_mapping(np_img.copy(), yolo_boxes, xml_path, yolo_label_mapping)

@@ -239,31 +239,33 @@ class IDSwitchAnalyzer:
         
         # 현재 프레임에서 ID switch가 발생한 객체들 확인
         current_switches = [s for s in switches if s['frame_id'] == frame_id]
-        
-        # 개선된 과거 프레임 검색 로직
         for switch in current_switches:
             xml_id = switch['xml_id']
             old_track_id = switch['old_track_id']
-            
-            # 타임라인 기반 검색 (버퍼 전체 검색)
-            valid_past_frames = []
+            found = False  # 최근 프레임 발견 여부 플래그
+
+            # 버퍼를 역순으로 검색 (최신 → 오래된 순)
             for past_frame in reversed(list(self.track_img_buffer)):
                 if past_frame['frame_id'] >= frame_id:
-                    continue  # 미래 프레임 제외
-                
+                    continue  # 현재/미래 프레임 건너뛰기
+
                 # 해당 프레임의 모든 detection 확인
                 for tid, det in past_frame['detections'].items():
                     if tid == old_track_id and det['xml_id'] == xml_id:
-                        valid_past_frames.append({
+                        previous_track_images.append({
                             'frame_id': past_frame['frame_id'],
                             'image': past_frame['image'],
                             'bbox': det['bbox'],
-                            'position': det['visual_pos']
+                            'position': det['visual_pos'],
+                            'xml_id': xml_id,
+                            'track_id': old_track_id
                         })
-            
-            # 최대 3개 프레임만 선택
-            previous_track_images.extend(valid_past_frames[:3])
-        
+                        found = True
+                        break  # 가장 최근 프레임 발견 → 내부 루프 종료
+
+                if found:
+                    break  # 외부 루프 종료
+
         return vis_img, previous_track_images
 
     def _calculate_visual_position(self, bbox: Tuple[int, int, int, int]) -> Tuple[int, int]:
