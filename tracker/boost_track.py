@@ -78,6 +78,7 @@ class KalmanBoxTracker(object):
         self.emb = emb
         self.hit_streak = 0
         self.age = 0
+        self.original_bbox = bbox  # 원본 YOLO 박스 저장
 
     def get_confidence(self, coef: float = 0.9) -> float:
         n = 7
@@ -91,6 +92,7 @@ class KalmanBoxTracker(object):
         Updates the state vector with observed bbox.
         """
 
+        self.original_bbox = bbox  # 원본 YOLO 박스 업데이트
         self.time_since_update = 0
         self.hit_streak += 1
         self.kf.update(self.bbox_to_z_func(bbox), score)
@@ -128,6 +130,12 @@ class KalmanBoxTracker(object):
 
     def get_emb(self):
         return self.emb
+
+    def get_original_bbox(self):
+        """
+        원본 YOLO 박스 반환
+        """
+        return self.original_bbox
 
 
 class BoostTrack(object):
@@ -277,6 +285,7 @@ class BoostTrack(object):
             lambda_shape=self.lambda_shape
         )
         
+        
         # print(f"\n{'='*50}")
         # print(f"프레임 {self.frame_count}")
         # print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
@@ -354,18 +363,17 @@ class BoostTrack(object):
         for trk in reversed(self.trackers):
             d = trk.get_state()[0]
             if (trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits):
-                # +1 as MOT benchmark requires positive
-                ret.append(np.concatenate((d, [trk.id], [trk.get_confidence()])).reshape(1, -1))  
-            i -= 1
-            # remove dead tracklet
-            if trk.time_since_update > self.max_age:
-                self.trackers.pop(i)
-
+                # 칼만 필터 상태 대신 원본 YOLO 박스 사용
+                original_bbox = trk.get_original_bbox()
+                ret.append(np.concatenate((
+                    original_bbox[:4],  # 원본 YOLO 좌표
+                    [trk.id],          # 트래킹 ID
+                    [trk.get_confidence()]  # 신뢰도
+                )).reshape(1, -1))
+        
         if len(ret) > 0:
             return np.concatenate(ret)
-        return np.empty((0, 5))
-
-
+        return np.empty((0, 6))  # x,y,w,h,id,conf
 
     def dump_cache(self):
         if self.ecc is not None:

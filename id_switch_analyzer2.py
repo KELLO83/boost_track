@@ -30,14 +30,14 @@ class IDSwitchAnalyzer:
         y1 = max(bbox1[1], bbox2[1])
         x2 = min(bbox1[2], bbox2[2])
         y2 = min(bbox1[3], bbox2[3])
-        intersection = max(0, x2 - x1) * max(0, y2 - y1)
+        intersection = max(0, abs(x2 - x1)) * max(0, abs(y2 - y1))
         area1 = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
         area2 = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
         union = area1 + area2 - intersection
         return intersection / union if union > 0 else 0.0
 
     def update(self, frame_id: int, yolo_track_mapping: Dict[int, int], 
-               yolo_label_mapping: Dict[int, str], yolo_bbox_mapping: Dict[int, Tuple[int, int, int, int]]) -> Dict:
+               yolo_label_mapping: Dict[int, str], yolo_bbox_mapping: Dict[int, Tuple[int, int, int, int]] , track_boxes : List[Tuple[int, int, int, int]]) -> Dict:
         """
                 
         현재 프레임의 tracking 결과와 XML 레이블을 분석하여 ID switch를 감지합니다.
@@ -47,6 +47,7 @@ class IDSwitchAnalyzer:
             yolo_track_mapping: YOLO 탐지 순서와 tracking ID 매핑 {yolo_idx: track_id}
             yolo_label_mapping: YOLO 탐지 순서와 XML 레이블 매핑 {yolo_idx: xml_id} 탐지순서 : 실제정답
             yolo_bbox_mapping: YOLO 탐지 순서와 바운딩 박스 매핑 {yolo_idx: (x1, y1, x2, y2)} 탐지순서 : 바운딩박스
+            track_boxes : [x1, y1, x2, y2]            
         
         Returns:
             현재 프레임의 ID switch 분석 결과
