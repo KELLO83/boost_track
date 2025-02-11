@@ -196,12 +196,13 @@ class BoostTrack(object):
         Returns the a similar array, where the last column is the object ID.
         NOTE: The number of objects returned may differ from the number of detections provided.
         
-        dets 형태 [x1,y1,x2,y2,score]   process_yolo_detection dets.append([x1, y1, x2, y2, conf])
+        dets 형태 [x1,y1,x2,y2,score]  
                 
         """
     
         if dets is None:
             return np.empty((0, 5))
+        
         if not isinstance(dets, np.ndarray):
             dets = dets.cpu().detach().numpy()
 
@@ -274,7 +275,7 @@ class BoostTrack(object):
         matched, unmatched_dets, unmatched_trks, sym_matrix = associate(
             dets,
             trks,
-            self.iou_threshold,
+            self.iou_threshold,           
             mahalanobis_distance=self.get_mh_dist_matrix(dets),
             track_confidence=confs,
             detection_confidence=scores,

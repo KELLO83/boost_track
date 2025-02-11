@@ -37,7 +37,7 @@ class IDSwitchAnalyzer:
         return intersection / union if union > 0 else 0.0
 
     def update(self, frame_id: int, yolo_track_mapping: Dict[int, int], 
-               yolo_label_mapping: Dict[int, str], yolo_bbox_mapping: Dict[int, Tuple[int, int, int, int]] , track_boxes : List[Tuple[int, int, int, int]]) -> Dict:
+               yolo_label_mapping: Dict[int, str], yolo_bbox_mapping: Dict[int, Tuple[int, int, int, int]]) -> Dict:
         """
                 
         현재 프레임의 tracking 결과와 XML 레이블을 분석하여 ID switch를 감지합니다.
@@ -46,8 +46,7 @@ class IDSwitchAnalyzer:
             frame_id: 현재 프레임 번호
             yolo_track_mapping: YOLO 탐지 순서와 tracking ID 매핑 {yolo_idx: track_id}
             yolo_label_mapping: YOLO 탐지 순서와 XML 레이블 매핑 {yolo_idx: xml_id} 탐지순서 : 실제정답
-            yolo_bbox_mapping: YOLO 탐지 순서와 바운딩 박스 매핑 {yolo_idx: (x1, y1, x2, y2)} 탐지순서 : 바운딩박스
-            track_boxes : [x1, y1, x2, y2]            
+            yolo_bbox_mapping: YOLO 탐지 순서와 바운딩 박스 매핑 {yolo_idx: (x1, y1, x2, y2)} 탐지순서 : 바운딩박스          
         
         Returns:
             현재 프레임의 ID switch 분석 결과
@@ -56,51 +55,60 @@ class IDSwitchAnalyzer:
         current_switches = []
         frame_mappings = {}
 
-        # 1단계: 현재 tracking 중인 객체들의 xml_id 매핑 확인
+        # 1단계: 현재 tracking 중인 객체들의 xml_id 매핑 확인 일단 tracking중인 객체가있나요? 즉 xml 과 tracking id 매핑이 이루어진 추적중인 객체가있는지 확인중.
         current_track_to_xml = {}
         for xml_id, track_id in self.label_to_current_track_id.items():
             current_track_to_xml[track_id] = xml_id
+            
+            
+            
 
-        xml_id_detections = defaultdict(list)
+        xml_id_detections = {}
+        best_match_scores = defaultdict(float)
+        used_track_ids = set()
+        
         # 2단계: YOLO 탐지와 tracking box 매칭 시 IOU 체크
         for yolo_idx in yolo_track_mapping:
             if yolo_idx in yolo_label_mapping and yolo_idx in yolo_bbox_mapping:
-                track_id = yolo_track_mapping[yolo_idx]
-                xml_id = yolo_label_mapping[yolo_idx]
-                bbox = yolo_bbox_mapping[yolo_idx]
+                track_id = yolo_track_mapping[yolo_idx] # yolo_idx 탐지순서가 가지고있는 tracking_id (가변)
+                xml_id = yolo_label_mapping[yolo_idx] # yolo_idx 탐지순서가 가지고있는 실제 xml_label (불변)
+                bbox = yolo_bbox_mapping[yolo_idx] # yolo_idx 가 가지고있는 yolo_box 영역 실제 영역
                 
-                # tracking box가 있는 경우, 해당 box와의 IOU 체크
+                # 현재 추적중인 객체인가요? 
                 if track_id in current_track_to_xml:
-                    current_xml = current_track_to_xml[track_id]
-                    if current_xml != xml_id:  # 다른 xml_id와 매칭되려고 할 때
+                    current_xml = current_track_to_xml[track_id] # tracking_id 가 가지고있는 실제 XML_ID // 이전 프레임에서 해당 track_id가 추적하던 xml_id
+                    if current_xml != xml_id:  # 다른 xml_id와 매칭되려고 할 때  // 현재 프레임에서 해당 track_id에 매칭된 xml_id
+                        
+                        
+                    
+                        # 이중감지 방지를 위한 코드 xml_id 이중디텍션일떄 서로 분류할려고
                         if current_xml in self.label_to_recent_bbox:
-                            iou = self.calculate_iou(self.label_to_recent_bbox[current_xml], bbox)
-                            if iou < 0.8:  # IOU가 낮으면 매칭하지 않음
-                                print(' ========================================================= ')
-                                print(f"Warning: YOLO label {xml_id} trying to match with track_id {track_id} (current xml_id: {current_xml}) but IOU too low: {iou}")
+                            if track_id in used_track_ids:
                                 continue
+                                
+                            iou = self.calculate_iou(self.label_to_recent_bbox[current_xml], bbox)
+                            current_score = iou
+
+                            if xml_id in best_match_scores:
+                                if current_score <= best_match_scores[xml_id]:
+                                    continue
+
+                            if iou < 0.7: # 임계값 자율적으로 조정이
+                                print(f"Warning: YOLO label {xml_id} IOU too low: {iou}")
+                                continue
+                                
+                            best_match_scores[xml_id] = current_score
+                            used_track_ids.add(track_id)
                 
-                xml_id_detections[xml_id].append({
-                    'track_id': track_id,
-                    'bbox': bbox,
-                    'yolo_idx': yolo_idx
-                })
+                
+                            
+                            xml_id_detections[xml_id] = {
+                                'track_id': track_id,
+                                'bbox': bbox,
+                                'yolo_idx': yolo_idx
+                            }
 
-        for xml_id, detections in xml_id_detections.items():
-            if len(detections) > 1:
-                if xml_id in self.label_to_recent_bbox:
-                    max_iou = -1
-                    selected_detection = None
-                    for det in detections:
-                        current_iou = self.calculate_iou(self.label_to_recent_bbox[xml_id], det['bbox'])
-                        if current_iou > max_iou:
-                            max_iou = current_iou
-                            selected_detection = det
-                    detections = [selected_detection]
-                else:
-                    detections = [detections[0]]
-
-            det = detections[0]
+            det = xml_id_detections[xml_id]
             track_id = det['track_id']
             bbox = det['bbox']
             frame_mappings[track_id] = xml_id
@@ -108,6 +116,7 @@ class IDSwitchAnalyzer:
             if xml_id not in self.label_appearances:
                 self.label_appearances[xml_id] = []
             self.label_appearances[xml_id].append(frame_id)
+
 
             # Handle track_id conflict with stricter IOU check
             prev_xml_id = self.track_to_xml_mapping.get(track_id)
