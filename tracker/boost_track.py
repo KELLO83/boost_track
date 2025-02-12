@@ -150,7 +150,7 @@ class BoostTrack(object):
         self.trackers = []
         
         #임베딩 유사도값 
-        self.emb_sim_score = cfg.emb_sim_score
+        self.emb_sim_score = cfg.emb_sim_score 
         
         # 설정 적용
         self.max_age = cfg.max_age
@@ -227,6 +227,7 @@ class BoostTrack(object):
             if trk.time_since_update > 1 and trk.time_since_update <= self.max_age * 2:
                 if trk not in self.inactive_trackers:  # 중복 방지
                     current_inactive.append(trk)
+                    
         self.inactive_trackers = current_inactive
                 
         confs = np.zeros((len(self.trackers), 1))
@@ -251,7 +252,7 @@ class BoostTrack(object):
         if self.embedder and dets.size > 0:
             # 현재 프레임의 모든 검출 객체에 대한 임베딩 계산
             # dets_embs shape: [N, D] where N=검출 객체 수, D=768(임베딩 차원)
-            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag)
+            dets_embs = self.embedder.compute_embedding(img_numpy, dets[:, :4], tag) # 
             
             if dets_embs.size == 0:  # 임베딩 계산 실패 시
                 raise RuntimeError("Embedding computation failed.")
@@ -287,10 +288,10 @@ class BoostTrack(object):
         )
         
         
-        # print(f"\n{'='*50}")
-        # print(f"프레임 {self.frame_count}")
-        # print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
-        # print(f"비활성 트래커 ID: {[t.id for t in self.inactive_trackers]}\n")
+        print(f"\n{'='*50}")
+        print(f"프레임 {self.frame_count}")
+        print(f"현재 트래커 ID: {[t.id for t in self.trackers]}")
+        print(f"비활성 트래커 ID: {[t.id for t in self.inactive_trackers]}\n")
         
         # if len(matched) > 0:
         #     print("[매칭된 정보]")
@@ -359,7 +360,16 @@ class BoostTrack(object):
             if dets[i, 4] >= self.det_thresh:
                 self.trackers.append(KalmanBoxTracker(dets[i, :], emb=dets_embs[i]))
 
+
+                
+        # Update tracker states and remove dead trackers
+        i = len(self.trackers)
+        for trk in reversed(self.trackers):
+            if trk.time_since_update > self.max_age:
+                self.trackers.pop(i-1)
+            i -= 1
         ret = []
+        
         i = len(self.trackers)
         for trk in reversed(self.trackers):
             d = trk.get_state()[0]

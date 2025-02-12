@@ -71,7 +71,7 @@ class IDSwitchAnalyzer:
         for yolo_idx in yolo_track_mapping:
             if yolo_idx in yolo_label_mapping and yolo_idx in yolo_bbox_mapping:
                 track_id = yolo_track_mapping[yolo_idx] # yolo_idx 탐지순서가 가지고있는 tracking_id (가변)
-                xml_id = yolo_label_mapping[yolo_idx] # yolo_idx 탐지순서가 가지고있는 실제 xml_label (불변)
+                xml_id = yolo_label_mapping[yolo_idx] # yolo_idx 탐지순서가 가지고있는 실제 xml_label (불변) # 3번쨰탐지된 욜로객체가 -> 5번을부여
                 bbox = yolo_bbox_mapping[yolo_idx] # yolo_idx 가 가지고있는 yolo_box 영역 실제 영역
                 
                 # 현재 추적중인 객체인가요? 
@@ -109,7 +109,7 @@ class IDSwitchAnalyzer:
                             }
 
             det = xml_id_detections[xml_id]
-            track_id = det['track_id']
+            track_id = det['track_id'] # 현재 탐지 객체의 tradking id 
             bbox = det['bbox']
             frame_mappings[track_id] = xml_id
 
@@ -119,8 +119,8 @@ class IDSwitchAnalyzer:
 
 
             # Handle track_id conflict with stricter IOU check
-            prev_xml_id = self.track_to_xml_mapping.get(track_id)
-            if prev_xml_id is not None and prev_xml_id != xml_id:
+            prev_xml_id = self.track_to_xml_mapping.get(track_id) # traing에해당하는 xml_id를 가져와서 # ID 5 -> XML_10
+            if prev_xml_id is not None and prev_xml_id != xml_id: # 
                 if prev_xml_id in self.label_to_recent_bbox:
                     iou = self.calculate_iou(self.label_to_recent_bbox[prev_xml_id], bbox)
                     if iou < 0.5:  # IOU가 낮으면 재할당하지 않음
@@ -128,8 +128,8 @@ class IDSwitchAnalyzer:
                         continue
 
             if xml_id in self.label_to_current_track_id:
-                current_track_id = self.label_to_current_track_id.get(xml_id)
-                if track_id != current_track_id:
+                current_track_id = self.label_to_current_track_id.get(xml_id)  # tradking id -> 실제 정답을 얻고
+                if track_id != current_track_id: # ID가 바뀜  a가 원래는 10번인데 a가 15번으로
                     frames_since_last = frame_id - self.label_appearances[xml_id][-2] if len(self.label_appearances[xml_id]) > 1 else 0
                     switch_info = {
                         'frame_id': frame_id,
@@ -140,6 +140,7 @@ class IDSwitchAnalyzer:
                         'total_switches': len(self.id_switches[xml_id]) + 1,
                         'iou': self.calculate_iou(self.label_to_recent_bbox[xml_id], bbox)
                     }
+                    
                     self.id_switches[xml_id].append(switch_info)
                     current_switches.append(switch_info)
                     self.total_switches += 1

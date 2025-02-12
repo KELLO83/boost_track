@@ -507,7 +507,7 @@ def main():
             continue
             
         results = model.predict(np_img, device='cuda', classes=[0], augment=True,
-                              iou=0.65, conf=0.55)
+                              iou=0.65, conf=0.55) # ultimcy.data.
         
         yolo_plot = results[0].plot()
         boxes = results[0].boxes
@@ -608,34 +608,34 @@ def main():
             x1, y1, x2, y2 = box[:4]  # box는 [x1, y1, x2, y2, conf, det_idx] 형식
             yolo_bbox_mapping[int(box[5])] = (float(x1), float(y1), float(x2), float(y2))
         
-        # ID Switch 분석 업데이트
-        switch_analysis = id_switch_analyzer.update(
-            frame_id=frame_id,
-            yolo_track_mapping=mapping_analysis['yolo_to_tracking'], 
-            yolo_label_mapping=yolo_label_mapping,
-            yolo_bbox_mapping=yolo_bbox_mapping,
-        )
+        # # ID Switch 분석 업데이트
+        # switch_analysis = id_switch_analyzer.update(
+        #     frame_id=frame_id,
+        #     yolo_track_mapping=mapping_analysis['yolo_to_tracking'], 
+        #     yolo_label_mapping=yolo_label_mapping,
+        #     yolo_bbox_mapping=yolo_bbox_mapping,
+        # )
         
         
-        # 현재 프레임에서 ID switch가 발생했다면 출력
-        IS_ID_SW = False
-        if switch_analysis['current_switches']:
-            print(f"\nFrame {frame_id}: ID Switches detected:")
-            for switch in switch_analysis['current_switches']:
-                print(f"  Ground Truth {switch['xml_id']}: Track ID changed from {switch['old_track_id']} to {switch['new_track_id']}")
-                if switch['frames_since_last'] > 0:
-                    print(f"    After {switch['frames_since_last']} frames from last appearance")
+        # # 현재 프레임에서 ID switch가 발생했다면 출력
+        # IS_ID_SW = False
+        # if switch_analysis['current_switches']:
+        #     print(f"\nFrame {frame_id}: ID Switches detected:")
+        #     for switch in switch_analysis['current_switches']:
+        #         print(f"  Ground Truth {switch['xml_id']}: Track ID changed from {switch['old_track_id']} to {switch['new_track_id']}")
+        #         if switch['frames_since_last'] > 0:
+        #             print(f"    After {switch['frames_since_last']} frames from last appearance")
                     
-            IS_ID_SW = True
+        #     IS_ID_SW = True
         
-        # ID Switch 분석 시각화
-        id_switch_vis, previous_track_images = id_switch_analyzer.visualize_id_switches(
-            image = np_img.copy(),
-            switches = switch_analysis['current_switches'],
-            current_mappings=switch_analysis['frame_mappings'],
-            frame_id = frame_id,
-            track_img = track_img  # 바운딩 박스와 ID가 표시된 이미지 전달
-        )
+        # # ID Switch 분석 시각화
+        # id_switch_vis, previous_track_images = id_switch_analyzer.visualize_id_switches(
+        #     image = np_img.copy(),
+        #     switches = switch_analysis['current_switches'],
+        #     current_mappings=switch_analysis['frame_mappings'],
+        #     frame_id = frame_id,
+        #     track_img = track_img  # 바운딩 박스와 ID가 표시된 이미지 전달
+        # )
         
         cv2.putText(track_img, f"Frame: {frame_id}", (10, 30),
                           cv2.FONT_HERSHEY_DUPLEX, 0.7, (0, 255, 0), 2)
@@ -644,8 +644,7 @@ def main():
         mapping_vis = visualizer.visualize_yolo_xml_mapping(np_img.copy(), yolo_boxes, xml_path, yolo_label_mapping)
         
         # Display results
-        if vis_config.visualize and IS_ID_SW:
-            IS_ID_SW = False
+        if vis_config.visualize :
             cv2.namedWindow('yolo_plot', cv2.WINDOW_NORMAL)
             cv2.imshow('yolo_plot', yolo_plot)
             cv2.namedWindow('yolo_tracking_id', cv2.WINDOW_NORMAL)
@@ -659,8 +658,8 @@ def main():
             cv2.namedWindow('YOLO-XML Mapping', cv2.WINDOW_NORMAL)
             cv2.imshow('YOLO-XML Mapping', mapping_vis)
             
-            cv2.namedWindow('ID Switch Analysis', cv2.WINDOW_NORMAL)
-            cv2.imshow('ID Switch Analysis', id_switch_vis)
+            # cv2.namedWindow('ID Switch Analysis', cv2.WINDOW_NORMAL)
+            # cv2.imshow('ID Switch Analysis', id_switch_vis)
             
             # 이전 tracking 이미지 표시
             prev_window_names = []  # 이전 tracking 이미지 창 이름 저장
